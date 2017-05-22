@@ -137,7 +137,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
 	# KL Divergence loss between assumed posterior and prior
-	KL = 0.5 * (1 + T.log(sd ** 2) - mu ** 2 - sd ** 2).sum(axis=1)
+	KL = -0.5 * (1 + T.log(sd ** 2) - mu ** 2 - sd ** 2).sum(axis=1)
 	# Reconstruction loss
 	RL = T.nnet.binary_crossentropy(probs, img).sum(axis=1)
 	cost = T.mean(KL + RL)
@@ -155,7 +155,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results/PD/training_pd_100_0.001_1.txt', 'w')
+	cost_report = open('./Results/PD/training_pd_100_0.001.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
@@ -184,7 +184,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/PD/training_pd_100_0.001_1_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/PD/training_pd_100_0.001_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 # Test graph
 else:
