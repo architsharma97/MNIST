@@ -1,7 +1,7 @@
 import sys
 
 import numpy as np
-from read_mnist import read
+from read_mnist import read, show
 import theano
 import theano.tensor as T
 from utils import save_obj, load_obj, init_weights, _concat
@@ -19,7 +19,7 @@ No arguments = train from random initialization
 
 seed = 42
 learning_rate = 0.001
-EPOCHS = 10
+EPOCHS = 100
 batch_size = 100
 
 # converts images into binary images for simplicity
@@ -92,18 +92,18 @@ if len(sys.argv) < 3:
 
 else:
 	# restore from saved weights
-	params = np.load(sys.argv[3])
+	params = np.load(sys.argv[2])
 
 tparams = OrderedDict()
 for key, val in params.iteritems():
 	tparams[key] = theano.shared(val, name=key)
 
 # Training graph
-if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
+if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	print "Constructing graph for training"
 	# create shared variables for dataset for easier access
 	trainC = theano.shared(trc, name='train')
-	trainP = theano.shared(trp, name='partial')
+	trainP = theano.shared(trp, name='train_partial')
 
 	# pass a batch of indices while training
 	img_ids = T.vector('ids', dtype='int64')
@@ -139,7 +139,7 @@ if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
 	# KL Divergence loss between assumed posterior and prior
 	KL = 0.5 * (1 + T.log(sd ** 2) - mu ** 2 - sd ** 2).sum(axis=1)
 	# Reconstruction loss
-	RL = -T.nnet.binary_crossentropy(probs, img).sum(axis=1)
+	RL = T.nnet.binary_crossentropy(probs, img).sum(axis=1)
 	cost = T.mean(KL + RL)
 
 	print "Computing gradients"
@@ -155,25 +155,28 @@ if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results/PD/training_pd_100_0.001.txt', 'w')
+	cost_report = open('./Results/PD/training_pd_100_0.001_1.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
 
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
+		epoch_start = time.time()
 		for batch_id in range(len(trc)/batch_size):
+			batch_start = time.time()
+
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
 			cost = f_grad_shared(idlist)
 			f_update(learning_rate)
 
 			epoch_cost += cost
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 			
 
-		print ": Cost " + str(epoch_cost)
+		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		# save every 5 epochs
-		if (epoch + 1)%5 == 0:
+		if (epoch + 1) % 5 == 0:
 			print "Saving..."
 
 			params = {}
@@ -181,8 +184,44 @@ if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/PD/training_pd_100_0.001_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/PD/training_pd_100_0.001_1_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 # Test graph
 else:
-	pass
+	print "Contructing test graph"
+	# create shared variables for test data
+	testC = theano.shared(tec, name='test')
+	testP = theano.shared(tep, name='test_partial')
+
+	# image ids
+	img_ids = T.vector('ids', dtype='int64')
+	gt = testC[img_ids,:]
+	inp = testP[img_ids,:]
+
+	if "gpu" in theano.config.device:
+		srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
+	else:
+		srng = T.shared_randomstreams.RandomStreams(seed=seed)
+
+	# sampling from zero mean normal distribution
+	latent_samples = srng.normal((img_ids.shape[0], latent_dim))
+
+	outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
+	outp_dec = fflayer(tparams, inp, _concat(ff_d, 'p'))
+
+	combine_dec = T.concatenate([outz, outp_dec], axis=1)
+
+	outh = fflayer(tparams, combine_dec, _concat(ff_d, 'h'))
+	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+	prediction = probs > 0.5
+
+	loss = abs(prediction-gt).sum()
+
+	# compiling test function
+	f = theano.function([img_ids], [prediction, loss])
+
+	pred, loss = f([10])
+
+	show(tec[10].reshape(28,28))
+	show(pred.reshape(28,28))
+	print loss
