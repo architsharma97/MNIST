@@ -166,6 +166,7 @@ if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
 			cost = f_grad_shared(idlist)
 			f_update(learning_rate)
 
+		
 # Test graph
 else:
 	pass
