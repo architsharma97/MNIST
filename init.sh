@@ -14,3 +14,5 @@ gunzip t10k-labels-idx1-ubyte.gz
 
 cd ../
 mkdir Results/
+mkdir Results/PD
+mkdir Results/SF

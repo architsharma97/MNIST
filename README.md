@@ -1,4 +1,4 @@
-Setup and run:
+Setup and train:
 ```
 chmod +x init.sh
 ./init.sh

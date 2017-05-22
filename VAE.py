@@ -19,7 +19,7 @@ No arguments = train from random initialization
 
 seed = 42
 learning_rate = 0.001
-EPOCHS = 100
+EPOCHS = 10
 batch_size = 100
 
 # converts images into binary images for simplicity
@@ -155,18 +155,34 @@ if len(sys.argv) < 2 or int(sys.argv[2]) == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
+	cost_report = open('./Results/PD/training_pd_100_0.001.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
-		print "Epoch " + str(epoch + 1)
+		print "Epoch " + str(epoch + 1),
 
 		np.random.shuffle(id_order)
-
+		epoch_cost = 0.
 		for batch_id in range(len(trc)/batch_size):
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
 			cost = f_grad_shared(idlist)
 			f_update(learning_rate)
 
-		
+			epoch_cost += cost
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + '\n')
+			
+
+		print ": Cost " + str(epoch_cost)
+		# save every 5 epochs
+		if (epoch + 1)%5 == 0:
+			print "Saving..."
+
+			params = {}
+			for key, val in tparams.iteritems():
+				params[key] = val.get_value()
+
+			# numpy saving
+			np.savez('./Results/PD/training_pd_100_0.001_' + str(epoch+1) + '.npz', **params)
+			print "Done!"
 # Test graph
 else:
 	pass
