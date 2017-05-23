@@ -18,7 +18,7 @@ No arguments = train from random initialization
 '''
 
 seed = 42
-learning_rate = 0.001
+learning_rate = 0.0001
 EPOCHS = 100
 batch_size = 100
 estimator = 'SF'
@@ -53,6 +53,8 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh'):
 		return T.tanh(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
 	elif nonlin == 'sigmoid':
 		return T.nnet.nnet.sigmoid(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
+	elif nonlin == 'softplus':
+		return T.nnet.nnet.softplus(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
 
 print "Creating partial images"
 # collect training data and converts image into binary and does row major flattening
@@ -133,7 +135,7 @@ out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
 # latent parameters
 mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
-sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin=None)
+sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin='softplus')
 
 if "gpu" in theano.config.device:
 	srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
@@ -180,16 +182,17 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		print "Computing gradients wrt to encoder parameters"
 		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/sd) ** 2).sum(axis=1)))
 
-		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss])
+		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
 		
-		grads=grads_encoder + grads_decoder
+		grads = grads_encoder + grads_decoder
+	
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
 
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
+	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost_encoder + cost_decoder)
 
 	print "Training"
 	cost_report = open('./Results/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
