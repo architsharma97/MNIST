@@ -1,3 +1,4 @@
 MNIST/
 Results/
 *.pyc
+Results_VAE/

@@ -13,6 +13,9 @@ gunzip t10k-images-idx3-ubyte.gz
 gunzip t10k-labels-idx1-ubyte.gz
 
 cd ../
+mkdir Results_VAE/
+mkdir Results_VAE/PD
+
 mkdir Results/
-mkdir Results/PD
+mkdir Results/PD/
 mkdir Results/SF

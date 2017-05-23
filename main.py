@@ -21,7 +21,8 @@ seed = 42
 learning_rate = 0.001
 EPOCHS = 100
 batch_size = 100
-estimator = 'PD'
+estimator = 'SF'
+delta = 1e-12
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -61,8 +62,8 @@ trc = np.asarray([binarize_img(img).flatten() for lbl, img in read(dataset='trai
 tec = np.asarray([binarize_img(img).flatten() for lbl, img in read(dataset='testing', path = 'MNIST/')], dtype=np.float32)
 
 # split images
-trp = np.asarray([split_img(img)[0] for img in trc], dtype=np.float32)
-tep = np.asarray([split_img(img)[0] for img in tec], dtype=np.float32)
+trp = [split_img(img) for img in trc]
+tep = [split_img(img) for img in tec]
 
 print "Initializing parameters"
 # parameter initializations
@@ -75,21 +76,17 @@ if len(sys.argv) < 3:
 	params = OrderedDict()
 
 	# encoder
-	params = param_init_fflayer(params, _concat(ff_e, 'c'), 28*28, 300) 
-	params = param_init_fflayer(params, _concat(ff_e, 'p'), 14*28, 200)
-
-	# common hidden layer
-	params = param_init_fflayer(params, _concat(ff_e, 'h'), 300+200, 250)
+	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
+	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
 	# latent distribution parameters
-	params = param_init_fflayer(params, 'mu', 250, latent_dim)
-	params = param_init_fflayer(params, 'sigma', 250, latent_dim)
+	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
+	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
 
 	# decoder parameters
 	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
-	params = param_init_fflayer(params, _concat(ff_d, 'p'), 14*28, 200)
-	params = param_init_fflayer(params, _concat(ff_d, 'h'), 200+100, 500)
-	params = param_init_fflayer(params, _concat(ff_d, 'o'), 500, 28*28)
+	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
 
 else:
 	# restore from saved weights
@@ -103,55 +100,70 @@ for key, val in params.iteritems():
 if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	print "Constructing graph for training"
 	# create shared variables for dataset for easier access
-	trainC = theano.shared(trc, name='train')
-	trainP = theano.shared(trp, name='train_partial')
+	top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
+	bot = np.asarray([splitimg[1] for splitimg in trp], dtype=np.float32)
+	
+	train = theano.shared(top, name='train')
+	train_gt = theano.shared(bot, name='train_gt')
 
 	# pass a batch of indices while training
 	img_ids = T.vector('ids', dtype='int64')
-	img = trainC[img_ids,:]
-	partial_img = trainP[img_ids, :]
+	img = train[img_ids,:]
+	gt = train_gt[img_ids,:]
 
-	outc = fflayer(tparams, img, _concat(ff_e, 'c'))
-	outp = fflayer(tparams, partial_img, _concat(ff_e, 'p'))
+# Test graph
+else:
+	print "Contructing the test graph"
+	# create shared variables for dataset for easier access
+	top = np.asarray([splitimg[0] for splitimg in tep], dtype=np.float32)
+	bot = np.asarray([splitimg[1] for splitimg in tep], dtype=np.float32)
+	
+	test = theano.shared(top, name='train')
+	test_gt = theano.shared(bot, name='train_gt')
 
-	combine = T.concatenate([outc, outp], axis=1)
-	out = fflayer(tparams, combine, _concat(ff_e, 'h'))
+	# image ids
+	img_ids = T.vector('ids', dtype='int64')
+	img = test[img_ids,:]
+	gt = test_gt[img_ids,:]
 
-	mu = fflayer(tparams, out, 'mu', nonlin=None)
-	sd = fflayer(tparams, out, 'sigma', nonlin=None)
+ 
+# encoding
+out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
+out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
-	if "gpu" in theano.config.device:
-		srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
-	else:
-		srng = T.shared_randomstreams.RandomStreams(seed=seed)
+# latent parameters
+mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
+sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin=None)
 
-	# sampling from zero mean normal distribution
-	eps = srng.normal(mu.shape)
-	latent_samples = mu + sd * eps
+if "gpu" in theano.config.device:
+	srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
+else:
+	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
-	outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
-	outp_dec = fflayer(tparams, partial_img, _concat(ff_d, 'p'))
+# sampling from zero mean normal distribution
+eps = srng.normal(mu.shape)
+latent_samples = mu + sd * eps
 
-	combine_dec = T.concatenate([outz, outp_dec], axis=1)
+# decoding
+outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
+outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
+probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
-	outh = fflayer(tparams, combine_dec, _concat(ff_d, 'h'))
-	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+# Training
+if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
+	
+	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
-	# KL Divergence loss between assumed posterior and prior
-	KL = -0.5 * (1 + T.log(sd ** 2) - mu ** 2 - sd ** 2).sum(axis=1)
-	# Reconstruction loss
-	RL = T.nnet.binary_crossentropy(probs, img).sum(axis=1)
-
-	# PD estimator for VAE using the reparametrization trick
+	# Uses the reparametrization trick
 	if estimator == 'PD':
-		cost = T.mean(KL + RL)
-		print "Computing gradients using PD estimators for encoder parameters"
+		print "Computing gradient estimators using PD"
+		cost = T.mean(reconstruction_loss)
 		param_list = [val for key, val in tparams.iteritems()]
+
 		grads = T.grad(cost, wrt=param_list)
 
-	# More general, but high variance SF estimator
-	elif estimator == 'SF':
-		print "Computing gradients using SF estimators for encoder parameters\n Not functional yet!"
+	if estimator == 'SF':
+		print "Computing gradient estimators using REINFORCE"
 
 		# separate parameters for encoder and decoder
 		param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
@@ -162,22 +174,15 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		print param_dec
 
 		print "Computing gradients wrt to decoder parameters"
-		cost_decoder = T.mean(KL + RL)
+		cost_decoder = T.mean(reconstruction_loss)
 		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
-		
+
 		print "Computing gradients wrt to encoder parameters"
-		def _log_normal(x, mu, sd):
-			return -0.5 * T.log((sd ** 2).sum()) - 0.5 * ((T.dot(T.transpose(x-mu), sd)/T.dot(sd,sd)) ** 2)
+		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/sd) ** 2).sum(axis=1)))
 
-		def _modified_gradient(loss, latent_sample, mu, sd):
-			return loss * T.grad(_log_normal(latent_sample, mu, sd), wrt=param_enc)
-
-		sf_grads, updates = theano.scan(_modified_gradient, sequences=[RL, latent_samples, mu, sd])
+		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss])
 		
-		grads_encoder = sf_grads.sum(axis=0)/(mu.shape[0]) + T.grad(T.mean(KL), wrt=param_enc)
-
-		grads = grads_encoder + grads_decoder
-
+		grads=grads_encoder + grads_decoder
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
 
@@ -187,7 +192,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results_VAE/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
@@ -216,45 +221,25 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results_VAE/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
-# Test graph
+# Test
 else:
-	print "Contructing test graph"
-	# create shared variables for test data
-	testC = theano.shared(tec, name='test')
-	testP = theano.shared(tep, name='test_partial')
-
-	# image ids
-	img_ids = T.vector('ids', dtype='int64')
-	gt = testC[img_ids,:]
-	inp = testP[img_ids,:]
-
-	if "gpu" in theano.config.device:
-		srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
-	else:
-		srng = T.shared_randomstreams.RandomStreams(seed=seed)
-
-	# sampling from zero mean normal distribution
-	latent_samples = srng.normal((img_ids.shape[0], latent_dim))
-
-	outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
-	outp_dec = fflayer(tparams, inp, _concat(ff_d, 'p'))
-
-	combine_dec = T.concatenate([outz, outp_dec], axis=1)
-
-	outh = fflayer(tparams, combine_dec, _concat(ff_d, 'h'))
-	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+	# useful for one example at a time only
 	prediction = probs > 0.5
 
 	loss = abs(prediction-gt).sum()
 
 	# compiling test function
 	f = theano.function([img_ids], [prediction, loss])
+	idx = 10
+	pred, loss = f([idx])
 
-	pred, loss = f([3928])
-
-	show(tec[3928].reshape(28,28))
-	show(pred.reshape(28,28))
+	show(tec[idx].reshape(28,28))
+	
+	reconstructed_img = np.zeros((28*28,))
+	reconstructed_img[:14*28] = tep[idx][0]
+	reconstructed_img[14*28:] = pred
+	show(reconstructed_img.reshape(28,28))
 	print loss
