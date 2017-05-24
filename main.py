@@ -258,7 +258,7 @@ else:
 
 	# compiling test function
 	f = theano.function([img_ids], [prediction, loss])
-	idx = 10
+	idx = 589
 	pred, loss = f([idx])
 
 	show(tec[idx].reshape(28,28))
