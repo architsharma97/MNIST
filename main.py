@@ -18,11 +18,12 @@ No arguments = train from random initialization
 '''
 
 seed = 42
-learning_rate = 0.0001
+learning_rate = 0.001
 EPOCHS = 100
 batch_size = 100
-estimator = 'SF'
-delta = 1e-12
+estimator = 'PD'
+code_name = 'pd_clip'
+delta = 1e-8
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -128,7 +129,7 @@ else:
 	img = test[img_ids,:]
 	gt = test_gt[img_ids,:]
 
- 
+
 # encoding
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
@@ -153,7 +154,7 @@ probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
 # Training
 if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
-	
+
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
 	# Uses the reparametrization trick
@@ -163,6 +164,9 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		param_list = [val for key, val in tparams.iteritems()]
 
 		grads = T.grad(cost, wrt=param_list)
+
+		cost_p = theano.printing.Print('Cost: ')(cost)
+		print_nodes = [cost_p]
 
 	if estimator == 'SF':
 		print "Computing gradient estimators using REINFORCE"
@@ -183,19 +187,36 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/sd) ** 2).sum(axis=1)))
 
 		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
-		
 		grads = grads_encoder + grads_decoder
-	
+
+		cost = cost_decoder
+		cost_encoder_p = theano.printing.Print('Encoder cost: ')(cost_encoder)
+		cost_decoder_p = theano.printing.Print('Cost: ')(cost_decoder)
+		print_nodes = [cost_decoder_p, cost_encoder_p]
+
+
+	# gradients are clipped when norm of gradients exceeds 5
+	g2 = 0.
+	for g in grads:
+		g2 += (g**2).sum()
+	new_grads = []
+	for g in grads:
+		new_grads.append(T.switch(g2 > 25,
+									g / T.sqrt(g2)*5, g))
+	grads = new_grads
+
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
 
+	fprint = theano.function(inps, print_nodes, on_unused_input='ignore')
+
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost_encoder + cost_decoder)
+	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
@@ -207,12 +228,13 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			batch_start = time.time()
 
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
+			# fprint(idlist)
 			cost = f_grad_shared(idlist)
 			f_update(learning_rate)
 
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
-			
+
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		# save every 5 epochs
@@ -224,7 +246,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + estimator + '/training_' + estimator.lower() + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 # Test
@@ -240,7 +262,7 @@ else:
 	pred, loss = f([idx])
 
 	show(tec[idx].reshape(28,28))
-	
+
 	reconstructed_img = np.zeros((28*28,))
 	reconstructed_img[:14*28] = tep[idx][0]
 	reconstructed_img[14*28:] = pred
