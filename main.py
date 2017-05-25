@@ -4,8 +4,9 @@ import numpy as np
 from read_mnist import read, show
 import theano
 import theano.tensor as T
-from utils import save_obj, load_obj, init_weights, _concat
+from utils import init_weights, _concat
 from adam import adam
+from theano.compile.nanguardmode import NanGuardMode
 
 from collections import OrderedDict
 import time
@@ -18,12 +19,15 @@ No arguments = train from random initialization
 '''
 
 seed = 42
-learning_rate = 0.001
+learning_rate = 0.000001
 EPOCHS = 100
 batch_size = 100
-estimator = 'PD'
-code_name = 'pd_clip'
-delta = 1e-8
+estimator = 'SF'
+code_name = 'sf'
+# for numerical stability of log
+delta = 1e-6
+# for regularization of encoder weights
+lmbda = 0.
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -162,7 +166,6 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
 		param_list = [val for key, val in tparams.iteritems()]
-
 		grads = T.grad(cost, wrt=param_list)
 
 		cost_p = theano.printing.Print('Cost: ')(cost)
@@ -181,10 +184,23 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 		print "Computing gradients wrt to decoder parameters"
 		cost_decoder = T.mean(reconstruction_loss)
+
+		# regularization
+		weights_sum_dec = 0.
+		for val in param_dec:
+			weights_sum_dec += (val**2).sum()
+		cost_decoder += lmbda * weights_sum_dec
+
 		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
 		print "Computing gradients wrt to encoder parameters"
-		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/sd) ** 2).sum(axis=1)))
+		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
+		
+		# regularization
+		weights_sum_enc = 0.
+		for val in param_enc:
+			weights_sum_enc += (val**2).sum()
+		cost_encoder += lmbda * weights_sum_enc
 
 		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
 		grads = grads_encoder + grads_decoder
@@ -195,22 +211,22 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		print_nodes = [cost_decoder_p, cost_encoder_p]
 
 
-	# gradients are clipped when norm of gradients exceeds 5
-	g2 = 0.
-	for g in grads:
-		g2 += (g**2).sum()
-	new_grads = []
-	for g in grads:
-		new_grads.append(T.switch(g2 > 25,
-									g / T.sqrt(g2)*5, g))
-	grads = new_grads
+	# # gradients are clipped when norm of gradients exceeds 5
+	# g2 = 0.
+	# for g in grads:
+	# 	g2 += (g**2).sum()
+	# new_grads = []
+	# for g in grads:
+	# 	new_grads.append(T.switch(g2 > 25,
+	# 								g / T.sqrt(g2)*5, g))
+	# grads = new_grads
 
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
 
-	fprint = theano.function(inps, print_nodes, on_unused_input='ignore')
+	fprint = theano.function(inps, print_nodes, on_unused_input='ignore', mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
 
 	print "Setting up optimizer"
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
