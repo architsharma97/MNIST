@@ -17,17 +17,21 @@ No arguments = train from random initialization
 1: Train = 0, Test = 1
 2: Address for weights
 '''
-
+# random seed 
 seed = 42
-learning_rate = 0.000001
+learning_rate = 0.00001
 EPOCHS = 100
 batch_size = 100
+# choose between 'PD' and 'SF' estimator
 estimator = 'SF'
+# identifier
 code_name = 'sf'
 # for numerical stability of log
 delta = 1e-6
 # for regularization of encoder weights
 lmbda = 0.
+# 'cont' => gaussian, 'disc' => bernoulli
+latent_type = 'disc'
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -87,8 +91,11 @@ if len(sys.argv) < 3:
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
 	# latent distribution parameters
-	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
-	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+	if latent_type == 'cont':
+		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
+		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+	elif latent_type == 'disc':
+		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
 
 	# decoder parameters
 	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
@@ -138,18 +145,23 @@ else:
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
-# latent parameters
-mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
-sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin='softplus')
-
 if "gpu" in theano.config.device:
 	srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
-# sampling from zero mean normal distribution
-eps = srng.normal(mu.shape)
-latent_samples = mu + sd * eps
+# latent parameters
+if latent_type == 'cont':
+	mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
+	sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin='softplus')
+
+	# sampling from zero mean normal distribution
+	eps = srng.normal(mu.shape)
+	latent_samples = mu + sd * eps
+
+elif latent_type == 'disc':
+	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
+	latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -161,7 +173,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
-	# Uses the reparametrization trick
+	# Uses the reparametrization trick, not to be used with discrete variables
 	if estimator == 'PD':
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
@@ -193,9 +205,14 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
-		print "Computing gradients wrt to encoder parameters"
-		cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
-		
+		if latent_type == 'cont':
+			print "Computing gradients wrt to encoder parameters"
+			cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
+			
+		elif latent_type =='disc':
+			print "Computing gradients wrt to encoder parameters"
+			cost = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+
 		# regularization
 		weights_sum_enc = 0.
 		for val in param_enc:
@@ -203,6 +220,8 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		cost_encoder += lmbda * weights_sum_enc
 
 		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
+
+		# combine grads in this order only
 		grads = grads_encoder + grads_decoder
 
 		cost = cost_decoder
@@ -232,7 +251,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
 	id_order = [i for i in range(len(trc))]
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
@@ -262,7 +281,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 # Test
