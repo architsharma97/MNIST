@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import cPickle as pickle
 import numpy as np
 import theano.tensor as T

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import matplotlib.pyplot as plt
 
 sf = open('Results/disc/SF/training_sf_100_0.0001.txt', 'r').read().splitlines()

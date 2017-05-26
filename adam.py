@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Adam optimizer picked up Ryan Kiros' implementation for skip-thoughts
 """
