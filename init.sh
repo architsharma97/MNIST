@@ -17,6 +17,8 @@ mkdir Results_VAE/
 mkdir Results_VAE/PD
 
 mkdir Results/
+mkdir Results/cont
+mkdir Results/disc
 mkdir Results/cont/PD/
 mkdir Results/cont/SF/
 mkdir Results/disc/SF/
