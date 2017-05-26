@@ -19,8 +19,10 @@ No arguments = train from random initialization
 
 A model to complete the images from MNIST, when only the top half is given. The top half is encoded into a latent distribution, 
 from which a sample is generated to be decoded. The latent variable can be continuous or discrete. For continuous, PD (-> reparametrization) and SF estimators are wrt to 
-gaussian latent variable. For discrete, SF estimators are wrt bernoulli latent variable, and PD estimators wrt to gumbel-softmax distribution (-> reparametrization)
+gaussian latent variable. For discrete, SF estimators are wrt bernoulli latent variable, and PD estimators wrt to gumbel-softmax distribution (-> reparametrization).
+Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling mode converts to one-hot vector.
 '''
+
 # random seed 
 seed = 42
 learning_rate = 0.0001
@@ -31,7 +33,7 @@ estimator = 'PD'
 # identifier
 code_name = 'pd_hard'
 # for numerical stability of log
-delta = 1e-6
+delta = 1e-10
 # for regularization of encoder weights
 lmbda = 0.
 # 'cont' => gaussian, 'disc' => bernoulli
@@ -176,7 +178,7 @@ elif latent_type == 'disc':
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 	
-	elif estimator =='PD':
+	elif estimator == 'PD':
 		# sample a gumbel-softmax distribution
 		temperature = T.scalar('temp', dtype='float32')
 		latent_probs_c = 1. - latent_probs
@@ -189,7 +191,9 @@ elif latent_type == 'disc':
 		e_x = T.exp(latent_samples_unnormalized - latent_samples_unnormalized.max(axis=0, keepdims=True))
 		latent_samples_soft = e_x / e_x.sum(axis=0, keepdims=True)
 		if hard_sample:
-			latent_samples = latent_samples_soft[1,:,:] > 0.5
+			# trick: consider_constant = [dummy]
+			dummy = latent_samples_soft[1,:,:] > 0.5 - latent_samples_soft[1, :, :]
+			latent_samples = latent_samples_soft[1,:,:] + dummy
 		else:
 			latent_samples = latent_samples_soft[1,:,:]
 
@@ -208,7 +212,13 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
 		param_list = [val for key, val in tparams.iteritems()]
-		grads = T.grad(cost, wrt=param_list)
+		
+		if latent_type == 'disc' and hard_sample == True:
+			# refer above for the trick
+			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
+		
+		elif latent_type == 'cont':
+			grads = T.grad(cost, wrt=param_list)
 
 		cost_p = theano.printing.Print('Cost: ')(cost)
 		# latent_samples_p = theano.printing.debugprint(latent_samples, print_type=True)
