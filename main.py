@@ -16,22 +16,30 @@ Script Arguments
 No arguments = train from random initialization
 1: Train = 0, Test = 1
 2: Address for weights
+
+A model to complete the images from MNIST, when only the top half is given. The top half is encoded into a latent distribution, 
+from which a sample is generated to be decoded. The latent variable can be continuous or discrete. For continuous, PD (-> reparametrization) and SF estimators are wrt to 
+gaussian latent variable. For discrete, SF estimators are wrt bernoulli latent variable, and PD estimators wrt to gumbel-softmax distribution (-> reparametrization)
 '''
 # random seed 
 seed = 42
-learning_rate = 0.00001
+learning_rate = 0.0001
 EPOCHS = 100
 batch_size = 100
 # choose between 'PD' and 'SF' estimator
-estimator = 'SF'
+estimator = 'PD'
 # identifier
-code_name = 'sf'
+code_name = 'pd_hard'
 # for numerical stability of log
 delta = 1e-6
 # for regularization of encoder weights
 lmbda = 0.
 # 'cont' => gaussian, 'disc' => bernoulli
 latent_type = 'disc'
+
+# if using PD estimators with bernoulli variables
+hard_sample = True
+temperature_init = 1.0
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -94,6 +102,7 @@ if len(sys.argv) < 3:
 	if latent_type == 'cont':
 		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
 		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+	
 	elif latent_type == 'disc':
 		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
 
@@ -160,8 +169,29 @@ if latent_type == 'cont':
 	latent_samples = mu + sd * eps
 
 elif latent_type == 'disc':
+	
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
-	latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+
+	if estimator == 'SF':
+		# sample a bernoulli distribution, which a binomial of 1 iteration
+		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+	
+	elif estimator =='PD':
+		# sample a gumbel-softmax distribution
+		temperature = T.scalar('temp', dtype='float32')
+		latent_probs_c = 1. - latent_probs
+		prob_vector = T.stack([latent_probs_c, latent_probs])
+		gumbel_samples = -T.log(-T.log(srng.uniform(prob_vector.shape, low=0.0, high=1.0, dtype='float32') + delta) + delta)
+
+		latent_samples_unnormalized = ((T.log(prob_vector + delta) + gumbel_samples)/temperature)
+		
+		# custom softmax for tensors
+		e_x = T.exp(latent_samples_unnormalized - latent_samples_unnormalized.max(axis=0, keepdims=True))
+		latent_samples_soft = e_x / e_x.sum(axis=0, keepdims=True)
+		if hard_sample:
+			latent_samples = latent_samples_soft[1,:,:] > 0.5
+		else:
+			latent_samples = latent_samples_soft[1,:,:]
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -173,7 +203,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
-	# Uses the reparametrization trick, not to be used with discrete variables
+	# Uses the reparametrization trick
 	if estimator == 'PD':
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
@@ -181,7 +211,9 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		grads = T.grad(cost, wrt=param_list)
 
 		cost_p = theano.printing.Print('Cost: ')(cost)
-		print_nodes = [cost_p]
+		# latent_samples_p = theano.printing.debugprint(latent_samples, print_type=True)
+		latent_samples_p = theano.printing.Print('Latent samples: ')(latent_samples)
+		print_nodes = [latent_samples_p]
 
 	if estimator == 'SF':
 		print "Computing gradient estimators using REINFORCE"
@@ -211,7 +243,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			
 		elif latent_type =='disc':
 			print "Computing gradients wrt to encoder parameters"
-			cost = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
 
 		# regularization
 		weights_sum_enc = 0.
@@ -244,6 +276,10 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
+	if estimator == 'PD' and latent_type == 'disc':
+		inps += [temperature]
+		temperature_min = temperature_init/2.0
+		anneal_rate = 0.00003
 
 	fprint = theano.function(inps, print_nodes, on_unused_input='ignore', mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
 
@@ -253,6 +289,9 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	print "Training"
 	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
 	id_order = [i for i in range(len(trc))]
+
+	iters = 0
+	cur_temp = temperature_init
 	for epoch in range(EPOCHS):
 		print "Epoch " + str(epoch + 1),
 
@@ -263,13 +302,20 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			batch_start = time.time()
 
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
-			# fprint(idlist)
-			cost = f_grad_shared(idlist)
+			if estimator == 'PD' and latent_type == 'disc':
+				# fprint(idlist, cur_temp)
+				cost = f_grad_shared(idlist, cur_temp)
+				iters += 1
+				if iters % 1000 == 0:
+					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
+			else:
+				# fprint(idlist)
+				cost = f_grad_shared(idlist)	
+			
 			f_update(learning_rate)
 
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
-
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		# save every 5 epochs
@@ -292,9 +338,16 @@ else:
 	loss = abs(prediction-gt).sum()
 
 	# compiling test function
-	f = theano.function([img_ids], [prediction, loss])
-	idx = 589
-	pred, loss = f([idx])
+	inps = [img_ids]
+	if estimator == 'PD' and latent_type =='disc':
+		inps += [temperature]
+
+	f = theano.function(inps, [prediction, loss])
+	idx = 10
+	if estimator == 'PD' and latent_type =='disc':
+		pred, loss = f([idx], 0.5)
+	else:
+		pred, loss = f([idx])
 
 	show(tec[idx].reshape(28,28))
 
