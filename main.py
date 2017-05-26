@@ -25,19 +25,28 @@ Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling m
 
 # random seed 
 seed = 42
-learning_rate = 0.0001
-EPOCHS = 100
+
+# save every save_freq epochs
+save_freq = 25
+
+# either max epochs ('e') or minimum loss levels for a minibatch ('c')
+term_condition = 'c'
+max_epochs = 100
+minbatch_cost = 60.0
+condition = False
+
 batch_size = 100
 # choose between 'PD' and 'SF' estimator
-estimator = 'PD'
+estimator = 'SF'
 # identifier
-code_name = 'pd_hard'
+code_name = 'sf'
 # for numerical stability of log
 delta = 1e-10
 # for regularization of encoder weights
 lmbda = 0.
 # 'cont' => gaussian, 'disc' => bernoulli
 latent_type = 'disc'
+learning_rate = 0.0001
 
 # if using PD estimators with bernoulli variables
 hard_sample = True
@@ -302,7 +311,10 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	iters = 0
 	cur_temp = temperature_init
-	for epoch in range(EPOCHS):
+	min_cost = 100000.0
+	epoch = 0
+
+	while condition == False:
 		print "Epoch " + str(epoch + 1),
 
 		np.random.shuffle(id_order)
@@ -321,15 +333,17 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			else:
 				# fprint(idlist)
 				cost = f_grad_shared(idlist)	
-			
+				min_cost = min(min_cost, cost)
+
 			f_update(learning_rate)
 
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
-		# save every 5 epochs
-		if (epoch + 1) % 5 == 0:
+		
+		# save every save_freq epochs
+		if (epoch + 1) % save_freq == 0:
 			print "Saving..."
 
 			params = {}
@@ -339,6 +353,24 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			# numpy saving
 			np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
+
+		epoch += 1
+		if term_condition == 'c' and min_cost < minbatch_cost:
+			condition = True
+		elif term_condition == 'e' and epoch >= max_epochs:
+			condition = True
+	
+	# saving the final model
+	if epoch % save_freq != 0:
+		print "Saving..."
+
+		params = {}
+		for key, val in tparams.iteritems():
+			params[key] = val.get_value()
+
+		# numpy saving
+		np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch) + '.npz', **params)
+		print "Done!"
 
 # Test
 else:
