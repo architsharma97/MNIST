@@ -3,4 +3,4 @@ Results/
 *.pyc
 Results_VAE/
 *.out
-jobscripts/
+jobsreports/
