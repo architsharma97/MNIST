@@ -167,7 +167,7 @@ out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
 if "gpu" in theano.config.device:
-	srng = theano.sandbox.cuda.rng_mrg.MRG_RandomStreams(seed=seed)
+	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
@@ -187,7 +187,7 @@ elif latent_type == 'disc':
 	if estimator == 'SF':
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		if "gpu" in theano.config.device:
-			latent_samples = srng.multinomial(size=latent_probs.shape, n=1, pvals=latent_probs, dtype=theano.config.floatX)
+			latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 		else:
 			latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 	
