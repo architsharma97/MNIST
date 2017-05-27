@@ -186,7 +186,10 @@ elif latent_type == 'disc':
 
 	if estimator == 'SF':
 		# sample a bernoulli distribution, which a binomial of 1 iteration
-		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+		if "gpu" in theano.config.device:
+			latent_samples = srng.multinomial(size=latent_probs.shape, n=1, pvals=latent_probs, dtype=theano.config.floatX)
+		else:
+			latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 	
 	elif estimator == 'PD':
 		# sample a gumbel-softmax distribution
