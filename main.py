@@ -167,7 +167,7 @@ out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
 if "gpu" in theano.config.device:
-	srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
+	srng = theano.sandbox.cuda.rng_mrg.MRG_RandomStreams(seed=seed)
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
