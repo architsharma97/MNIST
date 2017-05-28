@@ -33,7 +33,7 @@ save_freq = 25
 # either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'c'
 max_epochs = 100
-minbatch_cost = 60.0
+minbatch_cost = 55.0
 condition = False
 
 batch_size = 100
@@ -46,7 +46,7 @@ delta = 1e-10
 # for regularization of encoder weights
 lmbda = 0.
 # 'cont' => gaussian, 'disc' => bernoulli
-latent_type = 'disc'
+latent_type = 'cont'
 learning_rate = 0.0001
 
 # if using PD estimators with bernoulli variables
