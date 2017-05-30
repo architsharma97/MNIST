@@ -30,12 +30,12 @@ lmbda = 0.5
 
 # termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
-max_epochs = 1000
+max_epochs = 100
 minbatch_cost = 55.0
 condition = False
 
 # save every save_freq epochs
-save_freq = 25
+save_freq = 5
 
 def param_init_fflayer(params, prefix, nin, nout):
 	'''
@@ -61,12 +61,18 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh'):
 	elif nonlin == 'relu':
 		return T.nnet.nnet.relu(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
 
-def param_init_sgmod(params, prefix, units):
+def param_init_sgmod(params, prefix, units, zero_init=True):
 	'''
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
-	params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
-	params[_concat(prefix, 'C')] = init_weights(10, units, type_init='ortho')
+	if not zero_init:
+		params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
+		params[_concat(prefix, 'C')] = init_weights(10, units, type_init='ortho')
+	
+	else:
+		params[_concat(prefix, 'W')] = np.zeros((units, units)).astype('float32')
+		params[_concat(prefix, 'C')] = np.zeros((10, units)).astype('float32')
+
 	params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32') 
 
 	return params
@@ -176,13 +182,24 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		known_grads[out1] = synth_grad(tparams, _concat(sg, '1'), out1, lbl_one_hot)
 		grad_list_3 = T.grad(loss, wrt=var_list, known_grads=known_grads, consider_constant=[out2])
 		
-		# define a loss for synthetic gradient modules
-		loss_sg = 0.5 * ((grad_list_1[2] - known_grads[out2]) ** 2).sum() + 0.5 * ((grad_list_2[2] - known_grads[out1]) ** 2).sum()
+		# extract the right set out outputs from the actual computation graph to feed the input graph of synthetic gradients
+		semi_synth_grad_1 = T.matrix('ssgrad_1', dtype='float32')
+		semi_synth_grad_2 = T.matrix('ssgrad_2', dtype='float32')
+		h1 = T.matrix('activation_1', dtype='float32')
+		h2 = T.matrix('activation_2', dtype='float32')
+
+		loss_sg = 0.5 * ((semi_synth_grad_1 - synth_grad(tparams, _concat(sg, '1'), h1, lbl_one_hot)) ** 2).sum()
+		loss_sg += 0.5 * ((semi_synth_grad_2 - synth_grad(tparams, _concat(sg, '2'), h2, lbl_one_hot)) ** 2).sum()
+
 		sg_params_list = [val for key, val in tparams.iteritems() if 'sg' in key]
 
-		grads_sg = T.grad(loss_sg, wrt=sg_params_list, consider_constant=[grad_list_1[2], grad_list_2[2], out1, out2])
+		grads_sg = T.grad(loss_sg, wrt=sg_params_list)
 		grads_net = grad_list_3 + grad_list_2[:2] + grad_list_1[:2]
-	
+		
+		# key things
+		inps_sg = [semi_synth_grad_1, semi_synth_grad_2, h1, h2]
+		required_output_from_graph = [grad_list_2[2], grad_list_1[2], out1, out2]
+
 	lr = T.scalar('learning_rate', dtype='float32')
 
 	inps = [img_ids]
@@ -201,22 +218,9 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				tparams_sg[key] = tparams[key]
 			else:
 				tparams_net[key] = tparams[key]
-		
-		# check shapes of gradients
-		f_grad_check = theano.function(inps, grads_net + grads_sg)
-		comp_grads = f_grad_check(range(100))
 
-		i = 0
-		for key, val in tparams_net.iteritems():
-			print key, comp_grads[i].shape
-			i += 1
-
-		for key, val in tparams_sg.iteritems():
-			print key, comp_grads[i].shape
-			i += 1
-
-		f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps, loss)
-		f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps, loss_sg)
+		f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps, [loss] + required_output_from_graph)
+		f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps + inps_sg, loss_sg)
 
 	print "Training"
 	cost_report = open('./Results/classification/' + train_rou + '/training_' + code + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
@@ -229,25 +233,37 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
+		epoch_cost_sg = 0.
 		epoch_start = time.time()
 		for batch_id in range(len(tri)/batch_size):
 			batch_start = time.time()
 
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
-			cost = f_grad_shared(idlist)
-			min_cost = min(min_cost, cost)
+			
+			if train_rou == 'backprop':
+				cost = f_grad_shared(idlist)
+				min_cost = min(min_cost, cost)
 
+				f_update(learning_rate)
+			
 			if train_rou == 'synthetic_gradients':
-				cost_sg = f_grad_shared_sg(idlist)
-				f_update_sg(learning_rate)
+				outs = f_grad_shared(idlist)
+				f_update(learning_rate)
+				cost = outs[0]
 
-			f_update(learning_rate)
+				ssg1, ssg2, ac1, ac2 = outs[1:]
+				cost_sg = f_grad_shared_sg(idlist, ssg1, ssg2, ac1, ac2)
+				f_update_sg(learning_rate)
+				epoch_cost_sg += cost_sg
 
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 
+		if train_rou == 'synthetic_gradients':
+			print "SG cost : " + str(epoch_cost_sg)
+		
 		# save every save_freq epochs
 		if (epoch + 1) % save_freq == 0:
 			print "Saving..."
@@ -284,4 +300,4 @@ else:
 	f = theano.function([img_ids], acc)
 
 	# print accuracy over training data
-	print f([i for i in range(len(tei))])
+	print f(range(len(tei)))

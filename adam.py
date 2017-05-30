@@ -1,4 +1,3 @@
-#!/u/sharmaar/miniconda2/bin/python
 """
 Adam optimizer picked up Ryan Kiros' implementation for skip-thoughts
 """
