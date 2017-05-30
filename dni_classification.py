@@ -170,11 +170,11 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 		var_list = [tparams['ff_2_W'], tparams['ff_2_b'], out1]
 		known_grads[out2] = synth_grad(tparams, _concat(sg, '2'), out2, lbl_one_hot)
-		grad_list_2 = T.grad(loss, wrt=var_list, known_grads=known_grads)
+		grad_list_2 = T.grad(loss, wrt=var_list, known_grads=known_grads, consider_constant=[out3])
 		
 		var_list = [tparams['ff_1_W'], tparams['ff_1_b']]
 		known_grads[out1] = synth_grad(tparams, _concat(sg, '1'), out1, lbl_one_hot)
-		grad_list_3 = T.grad(loss, wrt=var_list, known_grads=known_grads)
+		grad_list_3 = T.grad(loss, wrt=var_list, known_grads=known_grads, consider_constant=[out2])
 		
 		# define a loss for synthetic gradient modules
 		loss_sg = 0.5 * ((grad_list_1[2] - known_grads[out2]) ** 2).sum() + 0.5 * ((grad_list_2[2] - known_grads[out1]) ** 2).sum()
@@ -201,6 +201,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				tparams_sg[key] = tparams[key]
 			else:
 				tparams_net[key] = tparams[key]
+		
 		# check shapes of gradients
 		f_grad_check = theano.function(inps, grads_net + grads_sg)
 		comp_grads = f_grad_check(range(100))
@@ -236,12 +237,12 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			cost = f_grad_shared(idlist)
 			min_cost = min(min_cost, cost)
 
-			f_update(learning_rate)
-
 			if train_rou == 'synthetic_gradients':
 				cost_sg = f_grad_shared_sg(idlist)
-				f_update(learning_rate)
+				f_update_sg(learning_rate)
 
+			f_update(learning_rate)
+			
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
