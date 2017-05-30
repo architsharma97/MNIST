@@ -23,10 +23,10 @@ learning_rate = 0.001
 
 # 'backprop' or 'synthetic_gradients'
 train_rou = 'synthetic_gradients'
-code = 'bp_relu_reg_0.5'
+code = 'sg_relu_reg_0.5'
 
 # regularization
-lmbda = 0.5
+lmbda = 0.0
 
 # termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
@@ -123,7 +123,8 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train_data[img_ids, :]
 	lbl = train_labels[img_ids, :]
-	lbl_one_hot = T.extra_ops.to_one_hot(lbl, 10, dtype='float32')
+	if train == 'synthetic_gradients':
+		lbl_one_hot = T.extra_ops.to_one_hot(lbl, 10, dtype='float32')
 
 # Test graph
 else:
@@ -149,11 +150,11 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	param_list = [val for key, val in tparams.iteritems() if 'sg' not in key]
 	
-	# regularization
-	weights_sum = 0.
-	for val in param_list:
-		weights_sum += (val**2).sum()
-	loss += lmbda * weights_sum 
+	# # regularization
+	# weights_sum = 0.
+	# for val in param_list:
+	# 	weights_sum += (val**2).sum()
+	# loss += lmbda * weights_sum 
 
 	if train_rou == 'backprop':
 		grads = T.grad(loss, wrt=param_list)
@@ -179,7 +180,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		loss_sg = 0.5 * ((grad_list_1[2] - known_grads[out2]) ** 2).sum() + 0.5 * ((grad_list_2[2] - known_grads[out1]) ** 2).sum()
 		sg_params_list = [val for key, val in tparams.iteritems() if 'sg' in key]
 
-		grads_sg = T.grad(loss_sg, wrt=sg_params_list, consider_constant=[grad_list_1[2], grad_list_2[2]])
+		grads_sg = T.grad(loss_sg, wrt=sg_params_list, consider_constant=[grad_list_1[2], grad_list_2[2], out1, out2])
 		grads_net = grad_list_3 + grad_list_2[:2] + grad_list_1[:2]
 	
 	lr = T.scalar('learning_rate', dtype='float32')
@@ -196,6 +197,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		# for x in f_grad_check(range(100)):
 		# 	print x.shape
 		
+		# split params for sg modules and network
 		tparams_net = OrderedDict()
 		tparams_sg = OrderedDict()
 		for key, val in tparams.iteritems():
