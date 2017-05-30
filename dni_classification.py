@@ -21,8 +21,12 @@ The task is the classify MNIST digits using a simple 3-layer fully connected net
 batch_size = 100
 learning_rate = 0.001
 
+# 'backprop' or 'synthetic_gradients'
+train_rou = 'synthetic_gradients'
+code = 'bp_relu_reg_0.5'
+
 # regularization
-lmbda = 0.0
+lmbda = 0.5
 
 # termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
@@ -31,7 +35,7 @@ minbatch_cost = 55.0
 condition = False
 
 # save every save_freq epochs
-save_freq = 5
+save_freq = 25
 
 def param_init_fflayer(params, prefix, nin, nout):
 	'''
@@ -54,6 +58,25 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh'):
 		return T.nnet.nnet.sigmoid(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
 	elif nonlin == 'softplus':
 		return T.nnet.nnet.softplus(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
+	elif nonlin == 'relu':
+		return T.nnet.nnet.relu(T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')])
+
+def param_init_sgmod(params, prefix, units):
+	'''
+	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
+	'''
+	params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
+	params[_concat(prefix, 'C')] = init_weights(10, units, type_init='ortho')
+	params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32') 
+
+	return params
+
+def synth_grad(tparams, prefix, activation, labels_one_hot):
+	'''
+	Synthetic gradient estimation using a linear model
+	'''
+
+	return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(labels_one_hot, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
 
 print "Getting data"
 # collect training data and labels and does row major flattening
@@ -67,6 +90,7 @@ tel = np.asarray([lbl for lbl, img in read(dataset='testing', path = 'MNIST/')],
 print "Initializing parameters"
 
 ff = 'ff'
+sg = 'sg'
 
 # no address for weights 
 if len(sys.argv) < 3:
@@ -74,6 +98,11 @@ if len(sys.argv) < 3:
 
 	params = param_init_fflayer(params, _concat(ff, '1'), 28*28, 300)
 	params = param_init_fflayer(params, _concat(ff, '2'), 300, 150)
+
+	if train_rou == 'synthetic_gradients':
+		params = param_init_sgmod(params, _concat(sg, '1'), 300)
+		params = param_init_sgmod(params, _concat(sg, '2'), 150)
+
 	params = param_init_fflayer(params, _concat(ff, 'o'), 150, 10)
 
 else:
@@ -85,7 +114,7 @@ for key, val in params.iteritems():
 
 # Training graph
 if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
-	print "Construncting the training graph"
+	print "Constructing the training graph"
 
 	train_data = theano.shared(tri, name='train_data')
 	train_labels = theano.shared(trl, name='train_labels')
@@ -94,6 +123,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train_data[img_ids, :]
 	lbl = train_labels[img_ids, :]
+	lbl_one_hot = T.extra_ops.to_one_hot(lbl, 10, dtype='float32')
 
 # Test graph
 else:
@@ -107,8 +137,8 @@ else:
 	img = test_data[img_ids, :]
 	lbl = test_labels[img_ids, :]
 
-out1 = fflayer(tparams, img, _concat(ff, '1'))
-out2 = fflayer(tparams, out1, _concat(ff, '2'))
+out1 = fflayer(tparams, img, _concat(ff, '1'), nonlin='relu')
+out2 = fflayer(tparams, out1, _concat(ff, '2'), nonlin='relu')
 out3 = fflayer(tparams, out2, _concat(ff, 'o'), nonlin=None)
 probs = T.nnet.nnet.softmax(out3)
 
@@ -117,7 +147,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	# cross-entropy loss: provide the index of 1 for a one-hot encoding
 	loss = T.nnet.nnet.categorical_crossentropy(probs, lbl).sum()
 
-	param_list = [val for key, val in tparams.iteritems()]
+	param_list = [val for key, val in tparams.iteritems() if 'sg' not in key]
 	
 	# regularization
 	weights_sum = 0.
@@ -125,16 +155,61 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		weights_sum += (val**2).sum()
 	loss += lmbda * weights_sum 
 
-	grads = T.grad(loss, wrt=param_list)
+	if train_rou == 'backprop':
+		grads = T.grad(loss, wrt=param_list)
+	
+	elif train_rou == 'synthetic_gradients':
+		print "Computing synthetic gradients"
+		
+		# computing gradients for last layer
+		var_list = [tparams['ff_o_W'], tparams['ff_o_b'], out2]
+		grad_list_1 = T.grad(loss, wrt=var_list)
+
+		known_grads = OrderedDict()
+
+		var_list = [tparams['ff_2_W'], tparams['ff_2_b'], out1]
+		known_grads[out2] = synth_grad(tparams, _concat(sg, '2'), out2, lbl_one_hot)
+		grad_list_2 = T.grad(loss, wrt=var_list, known_grads=known_grads)
+		
+		var_list = [tparams['ff_1_W'], tparams['ff_1_b']]
+		known_grads[out1] = synth_grad(tparams, _concat(sg, '1'), out1, lbl_one_hot)
+		grad_list_3 = T.grad(loss, wrt=var_list, known_grads=known_grads)
+		
+		# define a loss for synthetic gradient modules
+		loss_sg = 0.5 * ((grad_list_1[2] - known_grads[out2]) ** 2).sum() + 0.5 * ((grad_list_2[2] - known_grads[out1]) ** 2).sum()
+		sg_params_list = [val for key, val in tparams.iteritems() if 'sg' in key]
+
+		grads_sg = T.grad(loss_sg, wrt=sg_params_list, consider_constant=[grad_list_1[2], grad_list_2[2]])
+		grads_net = grad_list_3 + grad_list_2[:2] + grad_list_1[:2]
+	
 	lr = T.scalar('learning_rate', dtype='float32')
 
 	inps = [img_ids]
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams, grads, inps, loss)
+	
+	if train_rou == 'backprop':
+		f_grad_shared, f_update = adam(lr, tparams, grads, inps, loss)
+	
+	elif train_rou == 'synthetic_gradients':
+		# # check shapes of gradients
+		# f_grad_check = theano.function(inps, grads_net + grads_sg)
+		# for x in f_grad_check(range(100)):
+		# 	print x.shape
+		
+		tparams_net = OrderedDict()
+		tparams_sg = OrderedDict()
+		for key, val in tparams.iteritems():
+			if 'sg' in key:
+				tparams_sg[key] = tparams[key]
+			else:
+				tparams_net[key] = tparams[key]
+
+		f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps, loss)
+		f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps, loss_sg)
 
 	print "Training"
-	cost_report = open('./Results/classification/backprop/training_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
-	id_order = [i for i in range(len(tri))]
+	cost_report = open('./Results/classification/' + train_rou + '/training_' + code + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	id_order = range(len(tri))
 
 	min_cost = 100000.0
 	epoch = 0
@@ -153,6 +228,10 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 			f_update(learning_rate)
 
+			if train_rou == 'synthetic_gradients':
+				cost_sg = f_grad_shared_sg(idlist)
+				f_update(learning_rate)
+
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
@@ -167,7 +246,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/classification/backprop/training_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/classification/' + train_rou + '/training_' + code + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
@@ -185,7 +264,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			params[key] = val.get_value()
 
 		# numpy saving
-			np.savez('./Results/classification/backprop/training_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch) + '.npz', **params)
+			np.savez('./Results/classification/' + train_rou + '/training_' + code + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 else:

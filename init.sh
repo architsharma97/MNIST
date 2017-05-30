@@ -15,6 +15,7 @@ gunzip t10k-labels-idx1-ubyte.gz
 cd ../
 mkdir Results_VAE/
 mkdir Results_VAE/PD
+mkdir Results_VAE/SF
 
 mkdir Results/
 mkdir Results/cont

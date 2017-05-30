@@ -148,7 +148,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 # Test graph
 else:
-	print "Contructing the test graph"
+	print "Constructing the test graph"
 	# create shared variables for dataset for easier access
 	top = np.asarray([splitimg[0] for splitimg in tep], dtype=np.float32)
 	bot = np.asarray([splitimg[1] for splitimg in tep], dtype=np.float32)

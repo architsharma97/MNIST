@@ -16,13 +16,18 @@ Script Arguments
 No arguments = train from random initialization
 1: Train = 0, Test = 1
 2: Address for weights
+
+A simple C-VAE to compare the performance of SF and PD estimators.
 '''
 
+# meta-variables
 seed = 42
 learning_rate = 0.001
 EPOCHS = 100
 batch_size = 100
 estimator = 'PD'
+
+delta = 1e-10
 
 # converts images into binary images for simplicity
 def binarize_img(img):
@@ -167,18 +172,12 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 		
 		print "Computing gradients wrt to encoder parameters"
-		def _log_normal(x, mu, sd):
-			return -0.5 * T.log((sd ** 2).sum()) - 0.5 * ((T.dot(T.transpose(x-mu), sd)/T.dot(sd,sd)) ** 2)
-
-		def _modified_gradient(loss, latent_sample, mu, sd):
-			return loss * T.grad(_log_normal(latent_sample, mu, sd), wrt=param_enc)
-
-		sf_grads, updates = theano.scan(_modified_gradient, sequences=[RL, latent_samples, mu, sd])
+		cost_encoder = T.mean(RL * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)) + KL)	
+		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[RL, latent_samples])
 		
-		grads_encoder = sf_grads.sum(axis=0)/(mu.shape[0]) + T.grad(T.mean(KL), wrt=param_enc)
-
 		grads = grads_encoder + grads_decoder
-
+		cost = cost_decoder
+	
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
 
