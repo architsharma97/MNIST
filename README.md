@@ -1,4 +1,4 @@
-Setup:
+## Setup
 ```
 chmod +x init.sh
 ./init.sh
@@ -22,10 +22,10 @@ Main script provides has a few configuration routines. First choice is between a
 
 ## MNIST Classification using Synthetic Gradients (DNI)
 ```
-\# train
+# train
 THEANO_FLAGS='floatX=float32, device=cuda' python dni_classification.py
 
-\# test
+# test
 THEANO_FLAGS='floatX=float32, device=cuda' python dni_classification.py 1 /path/to/stored/weights/
 ```
 
