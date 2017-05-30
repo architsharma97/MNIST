@@ -311,7 +311,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	print "Training"
 	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
-	id_order = [i for i in range(len(trc))]
+	id_order = range(len(trc))
 
 	iters = 0
 	cur_temp = temperature_init

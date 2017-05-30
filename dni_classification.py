@@ -123,7 +123,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train_data[img_ids, :]
 	lbl = train_labels[img_ids, :]
-	if train == 'synthetic_gradients':
+	if train_rou == 'synthetic_gradients':
 		lbl_one_hot = T.extra_ops.to_one_hot(lbl, 10, dtype='float32')
 
 # Test graph
@@ -192,10 +192,6 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		f_grad_shared, f_update = adam(lr, tparams, grads, inps, loss)
 	
 	elif train_rou == 'synthetic_gradients':
-		# # check shapes of gradients
-		# f_grad_check = theano.function(inps, grads_net + grads_sg)
-		# for x in f_grad_check(range(100)):
-		# 	print x.shape
 		
 		# split params for sg modules and network
 		tparams_net = OrderedDict()
@@ -205,6 +201,18 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				tparams_sg[key] = tparams[key]
 			else:
 				tparams_net[key] = tparams[key]
+		# check shapes of gradients
+		f_grad_check = theano.function(inps, grads_net + grads_sg)
+		comp_grads = f_grad_check(range(100))
+
+		i = 0
+		for key, val in tparams_net.iteritems():
+			print key, comp_grads[i].shape
+			i += 1
+
+		for key, val in tparams_sg.iteritems():
+			print key, comp_grads[i].shape
+			i += 1
 
 		f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps, loss)
 		f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps, loss_sg)
