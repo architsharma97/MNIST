@@ -26,11 +26,11 @@ train_rou = 'synthetic_gradients'
 code = 'sg_relu_reg_0.5'
 
 # regularization
-lmbda = 0.0
+lmbda = 0.5
 
 # termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
-max_epochs = 100
+max_epochs = 1000
 minbatch_cost = 55.0
 condition = False
 
@@ -150,11 +150,11 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	param_list = [val for key, val in tparams.iteritems() if 'sg' not in key]
 	
-	# # regularization
-	# weights_sum = 0.
-	# for val in param_list:
-	# 	weights_sum += (val**2).sum()
-	# loss += lmbda * weights_sum 
+	# regularization
+	weights_sum = 0.
+	for val in param_list:
+		weights_sum += (val**2).sum()
+	loss += lmbda * weights_sum 
 
 	if train_rou == 'backprop':
 		grads = T.grad(loss, wrt=param_list)
@@ -242,7 +242,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				f_update_sg(learning_rate)
 
 			f_update(learning_rate)
-			
+
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
