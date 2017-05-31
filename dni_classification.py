@@ -35,7 +35,7 @@ minbatch_cost = 55.0
 condition = False
 
 # save every save_freq epochs
-save_freq = 5
+save_freq = 25
 
 def param_init_fflayer(params, prefix, nin, nout):
 	'''
