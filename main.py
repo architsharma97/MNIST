@@ -1,4 +1,3 @@
-#!/u/sharmaar/miniconda2/bin/python
 import sys
 
 import numpy as np

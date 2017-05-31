@@ -18,7 +18,7 @@ Main script provides has a few configuration routines. First choice is between a
 
 **Discrete + SF**: Again, uses the reinforce estimator for bernoulli latent variable.
 
-**Discrete + PD**: Uses the gumbel-softmax approximation for discrete latent variables. This also allows the usage of reparametrization trick to make use of PD estimators. There are two modes: Soft-sampling and Hard-sampling. Hard-Sampling makes use of the Straight through estimator to propagate gradients through the non-differentiable operation of hard sampling.
+**Discrete + PD**: Uses the gumbel-softmax approximation for discrete latent variables. This also allows the usage of reparametrization trick to make use of PD estimators. There are two modes: Soft-sampling and Hard-sampling. Hard-Sampling makes use of the Straight Through (ST) estimator to propagate gradients through the non-differentiable operation of hard sampling.
 
 ## MNIST Classification using Synthetic Gradients (DNI)
 ```
@@ -29,4 +29,4 @@ THEANO_FLAGS='floatX=float32, device=cuda' python dni_classification.py
 THEANO_FLAGS='floatX=float32, device=cuda' python dni_classification.py 1 /path/to/stored/weights/
 ```
 
-For the MNIST Classification, a simple 3-layer NN neural network. Two routines are possible: Using the standard backpropagation and using synthetic gradients.
+For the MNIST Classification, a simple 3-layer NN neural network is trained. Two routines are possible: Using the standard backpropagation or using synthetic gradients.

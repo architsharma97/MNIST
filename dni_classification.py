@@ -30,7 +30,7 @@ lmbda = 0.5
 
 # termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
-max_epochs = 100
+max_epochs = 1000
 minbatch_cost = 55.0
 condition = False
 
