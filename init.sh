@@ -24,6 +24,7 @@ mkdir Results/cont/PD/
 mkdir Results/cont/SF/
 mkdir Results/disc/SF/
 mkdir Results/disc/PD/
+mkdir Results/disc/synthetic_gradients/
 mkdir Results/classification/
 mkdir Results/classification/backprop
 mkdir Results/classification/synthetic_gradients

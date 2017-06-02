@@ -1,4 +1,3 @@
-#!/u/sharmaar/miniconda2/bin/python
 import cPickle as pickle
 import numpy as np
 import theano.tensor as T

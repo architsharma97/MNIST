@@ -6,59 +6,44 @@ import theano
 import theano.tensor as T
 from utils import init_weights, _concat
 from adam import adam
-from theano.compile.nanguardmode import NanGuardMode
 import argparse
 
 from collections import OrderedDict
 import time
 
 '''
-A model to complete the images from MNIST, when only the top half is given. The top half is encoded into a latent distribution, 
-from which a sample is generated to be decoded. The latent variable can be continuous or discrete. For continuous, PD (-> reparametrization) and SF estimators are wrt to 
-gaussian latent variable. For discrete, SF estimators are wrt bernoulli latent variable, and PD estimators wrt to gumbel-softmax distribution (-> reparametrization).
-Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling mode converts to one-hot vector.
+Experiments with synthetic gradients in stochastic graphs. The task is to complete images from MNIST, when only the top half is given.
+Bernoulli latent variables with REINFORCE estimators are the baseline for comparison.
+1: Train = 0, Test = 1
+2: Address for weights 
 '''
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-r', '--repeat', type=int, default=1, help='number of samples per training example for SF estimator')
-parser.add_argument('-m', '--mode', type=int, default=0, help='0 for train, 1 for test')
-parser.add_argument('-l', '--load', type=str, default=None, help='path to weights to be loaded')
 args = parser.parse_args()
 
-# random seed 
+# random seed for latent distribution
 seed = 42
+batch_size = 100
+learning_rate = 0.001
 
-# save every save_freq epochs
-save_freq = 25
+# number of latent samples for an example
+k = args.repeat
 
-# either max epochs ('e') or minimum loss levels for a minibatch ('c')
+code_name = 'sg_inp_act_lin_' + str(k)
+latent_type ='disc'
+estimator = 'synthetic_gradients'
+
+# termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
 term_condition = 'e'
 max_epochs = 1000
 minbatch_cost = 55.0
 condition = False
 
-batch_size = 100
-# choose between 'PD' and 'SF' estimator
-estimator = 'SF'
-
-# number of samples per training example, okay to provide if training and using SF estimator
-k = args.repeat
-# used for parameter saving and cost reports
-code_name = 'sf_' + str(k) 
-
-# for numerical stability
+# save every save_freq epochs
+save_freq = 5
 delta = 1e-10
-# for regularization of encoder weights
-lmbda = 0.
-
-# 'cont' => gaussian, 'disc' => bernoulli
-latent_type = 'disc'
-learning_rate = 0.0001
-
-# if using PD estimators with bernoulli variables
-hard_sample = True
-temperature_init = 1.0
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # converts images into binary images for simplicity
@@ -95,8 +80,30 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh'):
 		return T.nnet.nnet.softplus(preact)
 	elif nonlin == 'relu':
 		return T.nnet.nnet.relu(preact)
-# ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
+def param_init_sgmod(params, prefix, units, zero_init=True):
+	'''
+	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
+	'''
+	if not zero_init:
+		params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
+		params[_concat(prefix, 'C')] = init_weights(14*28, units, type_init='ortho')
+	
+	else:
+		params[_concat(prefix, 'W')] = np.zeros((units, units)).astype('float32')
+		params[_concat(prefix, 'C')] = np.zeros((14*28, units)).astype('float32')
+
+	params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32') 
+
+	return params
+
+def synth_grad(tparams, prefix, activation, input_img):
+	'''
+	Synthetic gradient estimation using a linear model
+	'''
+	return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(input_img, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
 print "Creating partial images"
 # collect training data and converts image into binary and does row major flattening
 trc = np.asarray([binarize_img(img).flatten() for lbl, img in read(dataset='training', path ='MNIST/')], dtype=np.float32)
@@ -112,24 +119,22 @@ print "Initializing parameters"
 # parameter initializations
 ff_e = 'ff_enc'
 ff_d = 'ff_dec'
+sg = 'sg'
 latent_dim = 50
 
 # no address provided for weights
-if args.load is None:
+if len(sys.argv) < 3:
 	params = OrderedDict()
 
 	# encoder
 	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
-	# latent distribution parameters
-	if latent_type == 'cont':
-		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
-		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+	# latent
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
+	# synthetic gradient module for the last encoder layer
+	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
 	
-	elif latent_type == 'disc':
-		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
-
 	# decoder parameters
 	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
 	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
@@ -137,7 +142,7 @@ if args.load is None:
 
 else:
 	# restore from saved weights
-	params = np.load(args.load)
+	params = np.load(sys.argv[2])
 
 tparams = OrderedDict()
 for key, val in params.iteritems():
@@ -145,7 +150,7 @@ for key, val in params.iteritems():
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training graph
-if args.mode == 0:
+if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	print "Constructing graph for training"
 	# create shared variables for dataset for easier access
 	top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
@@ -158,8 +163,13 @@ if args.mode == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
 	gt = train_gt[img_ids,:]
-	if estimator == 'SF':
-		gt = T.extra_ops.repeat(gt, k, axis=0)
+	# repeat k-times to compensate for the samping process
+	gt = T.extra_ops.repeat(gt, k, axis=0)
+
+	# inputs for synthetic gradient networks
+	target_gradients = T.matrix('tg', dtype='float32')
+	activation = T.matrix('sg_input_probs', dtype='float32')
+	# also provide the top half of the image as input the synthetic gradient subnetworks
 
 # Test graph
 else:
@@ -176,53 +186,21 @@ else:
 	img = test[img_ids,:]
 	gt = test_gt[img_ids,:]
 
-
 # encoding
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
+out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
+
+# repeat k-times so that for every input in a minibatch, there are k samples
+latent_probs = T.extra_ops.repeat(out3, k, axis=0)
 
 if "gpu" in theano.config.device:
 	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
-# latent parameters
-if latent_type == 'cont':
-	mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
-	sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin='softplus')
-
-	# sampling from zero mean normal distribution
-	eps = srng.normal(mu.shape)
-	latent_samples = mu + sd * eps
-
-elif latent_type == 'disc':
-	
-	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
-
-	if estimator == 'SF':
-		latent_probs = T.extra_ops.repeat(latent_probs, k, axis=0)
-
-		# sample a bernoulli distribution, which a binomial of 1 iteration
-		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
-	
-	elif estimator == 'PD':
-		# sample a gumbel-softmax distribution
-		temperature = T.scalar('temp', dtype='float32')
-		latent_probs_c = 1. - latent_probs
-		prob_vector = T.stack([latent_probs_c, latent_probs])
-		gumbel_samples = -T.log(-T.log(srng.uniform(prob_vector.shape, low=0.0, high=1.0, dtype='float32') + delta) + delta)
-
-		latent_samples_unnormalized = ((T.log(prob_vector + delta) + gumbel_samples)/temperature)
-		
-		# custom softmax for tensors
-		e_x = T.exp(latent_samples_unnormalized - latent_samples_unnormalized.max(axis=0, keepdims=True))
-		latent_samples_soft = e_x / e_x.sum(axis=0, keepdims=True)
-		
-		if hard_sample:
-			dummy = latent_samples_soft[1,:,:] > 0.5 - latent_samples_soft[1, :, :]
-			latent_samples = latent_samples_soft[1,:,:] + dummy
-		else:
-			latent_samples = latent_samples_soft[1,:,:]
+# sample a bernoulli distribution, which a binomial of 1 iteration
+latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -230,81 +208,64 @@ outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
 probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
 # Training
-if args.mode == 0:
+if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
+	print "Computing synthetic gradients"
 
-	# Uses the reparametrization trick
-	if estimator == 'PD':
-		print "Computing gradient estimators using PD"
-		cost = T.mean(reconstruction_loss)
-		param_list = [val for key, val in tparams.iteritems()]
-		
-		if latent_type == 'disc' and hard_sample == True:
-			# equivalent to stop_gradient trick in tensorflow
-			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
-		
-		elif latent_type == 'cont':
-			grads = T.grad(cost, wrt=param_list)
+	# separate parameters for encoder, decoder and sg subnetworks
+	param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
+	param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
+	param_sg = [val for key, val in tparams.iteritems() if 'sg' in key]
 
-	if estimator == 'SF':
-		print "Computing gradient estimators using REINFORCE"
+	print "Encoder parameters:", param_enc
+	print "Decoder parameters:", param_dec
+	print "Synthetic gradient subnetwork parameters:", param_sg
+	
+	print "Computing gradients wrt to decoder parameters"
+	cost_decoder = T.mean(reconstruction_loss)
+	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
-		# separate parameters for encoder and decoder
-		param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
-		param_enc = [val for key, val in tparams.iteritems() if 'ff_dec' not in key]
-		print "Encoder parameters:", param_enc
-		print "Decoder parameters: ", param_dec
+	print "Computing gradients wrt to encoder parameters"
+	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
 
-		print "Computing gradients wrt to decoder parameters"
-		cost_decoder = T.mean(reconstruction_loss)
+	known_grads = OrderedDict()
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
+	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
-		# regularization
-		weights_sum_dec = 0.
-		for val in param_dec:
-			weights_sum_dec += (val**2).sum()
-		cost_decoder += lmbda * weights_sum_dec
+	# combine grads in this order only
+	grads_net = grads_encoder + grads_decoder
 
-		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
+	# synthetic gradient sub-network
+	# computing target for synthetic gradient, will be output in every iteration
+	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=[reconstruction_loss, latent_samples])
+	
+	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), activation, img))**2).sum()
+	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
-		print "Computing gradients wrt to encoder parameters"
-		if latent_type == 'cont':
-			cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
-			
-		elif latent_type =='disc':
-			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
-
-		# regularization
-		weights_sum_enc = 0.
-		for val in param_enc:
-			weights_sum_enc += (val**2).sum()
-		cost_encoder += lmbda * weights_sum_enc
-
-		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
-
-		# combine grads in this order only
-		grads = grads_encoder + grads_decoder
-
-		cost = cost_decoder
-
-	# learning rate
+	cost = cost_decoder
 	lr = T.scalar('lr', dtype='float32')
 
-	inps = [img_ids]
-	if estimator == 'PD' and latent_type == 'disc':
-		inps += [temperature]
-		temperature_min = temperature_init/2.0
-		anneal_rate = 0.00003
+	inps_net = [img_ids]
+	inps_sg = inps_net + [activation, target_gradients]
+	tparams_net = OrderedDict()
+	tparams_sg = OrderedDict()
+	for key, val in tparams.iteritems():
+		print key
+		if 'sg' in key:
+			tparams_sg[key] = val
+		else:
+			tparams_net[key] = val
 
-	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
-
+	print "Setting up optimizers"
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3])
+	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
+	
 	print "Training"
 	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
 	id_order = range(len(trc))
 
 	iters = 0
-	cur_temp = temperature_init
 	min_cost = 100000.0
 	epoch = 0
 
@@ -313,28 +274,28 @@ if args.mode == 0:
 
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
+		epoch_cost_sg = 0.
 		epoch_start = time.time()
 		for batch_id in range(len(trc)/batch_size):
 			batch_start = time.time()
+			iters += 1
 
 			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
-			if estimator == 'PD' and latent_type == 'disc':
-				# fprint(idlist, cur_temp)
-				cost = f_grad_shared(idlist, cur_temp)
-				iters += 1
-				if iters % 1000 == 0:
-					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
-			else:
-				# fprint(idlist)
-				cost = f_grad_shared(idlist)	
-				min_cost = min(min_cost, cost)
-
+			cost, t, ls = f_grad_shared(idlist)	
 			f_update(learning_rate)
-
+			cost_sg = 'NC'
+			if iters % k == 0 and not np.isnan((t**2).sum()):
+				cost_sg = f_grad_shared_sg(idlist, ls, t)
+				f_update_sg(learning_rate)
+				epoch_cost_sg += cost_sg
+			elif np.isnan((t**2).sum()):
+				print "NaN encountered at", iters	
+			
 			epoch_cost += cost
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
+			min_cost = min(min_cost, cost)
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(time.time() - batch_start) + '\n')
 
-		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
+		print ": Cost " + str(epoch_cost) + " : SG Cost " + str(epoch_cost_sg) + " : Time " + str(time.time() - epoch_start)
 		
 		# save every save_freq epochs
 		if (epoch + 1) % save_freq == 0:
@@ -371,19 +332,14 @@ else:
 	# useful for one example at a time only
 	prediction = probs > 0.5
 
-	loss = abs(prediction - gt).sum()
+	loss = abs(prediction-gt).sum()
 
 	# compiling test function
 	inps = [img_ids]
-	if estimator == 'PD' and latent_type =='disc':
-		inps += [temperature]
-
+	
 	f = theano.function(inps, [prediction, loss])
 	idx = 10
-	if estimator == 'PD' and latent_type =='disc':
-		pred, loss = f([idx], 0.5)
-	else:
-		pred, loss = f([idx])
+	pred, loss = f([idx])
 
 	show(tec[idx].reshape(28,28))
 

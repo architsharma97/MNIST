@@ -1,4 +1,3 @@
-#!/u/sharmaar/miniconda2/bin/python
 import os
 import struct
 import numpy as np
