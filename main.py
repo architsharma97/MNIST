@@ -21,9 +21,9 @@ Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling m
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-r', '--repeat', type=int, default=1, help='number of samples per training example for SF estimator')
+parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
 parser.add_argument('-m', '--mode', type=int, default=0, help='0 for train, 1 for test')
-parser.add_argument('-l', '--load', type=str, default=None, help='path to weights to be loaded')
+parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
 args = parser.parse_args()
 
 # random seed 

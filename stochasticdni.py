@@ -14,35 +14,31 @@ import time
 '''
 Experiments with synthetic gradients in stochastic graphs. The task is to complete images from MNIST, when only the top half is given.
 Bernoulli latent variables with REINFORCE estimators are the baseline for comparison.
-1: Train = 0, Test = 1
-2: Address for weights 
 '''
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-r', '--repeat', type=int, default=1, help='number of samples per training example for SF estimator')
+parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
+parser.add_argument('-m', '--mode', type=str, default='train', help='train or test')
+parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
+parser.add_argument('-a', '--learning_rate', type=float, default=0.001, help='Learning rate')
+parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
+parser.add_argument('-e','--random_seed', type=int, default=42, help='Seed to initialize random streams')
+parser.add_argument('-o','--latent_type', type=str, default='disc', help='No other options')
+parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
+					help='Training terminates either when number of epochs are completed (epochs) or when minimum cost is achieved for a batch (mincost)')
+parser.add_argument('-n','--num_epochs', type=int, default=100, 
+					help='Number of epochs, to be specified when termination condition is epochs')
+parser.add_argument('-c','--min_cost', type=float, default=55.0, 
+					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
+parser.add_argument('-s','--save_freq', type=int, default=5, 
+					help='Number of epochs after which weights should be saved')
+
 args = parser.parse_args()
 
-# random seed for latent distribution
-seed = 42
-batch_size = 100
-learning_rate = 0.001
-
-# number of latent samples for an example
-k = args.repeat
-
-code_name = 'sg_inp_act_lin_' + str(k)
-latent_type ='disc'
+code_name = 'sg_inp_act_lin_' + str(args.repeat)
 estimator = 'synthetic_gradients'
 
-# termination conditions: either max epochs ('e') or minimum loss levels for a minibatch ('c')
-term_condition = 'e'
-max_epochs = 1000
-minbatch_cost = 55.0
-condition = False
-
-# save every save_freq epochs
-save_freq = 5
 delta = 1e-10
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -123,7 +119,7 @@ sg = 'sg'
 latent_dim = 50
 
 # no address provided for weights
-if len(sys.argv) < 3:
+if args.load is None:
 	params = OrderedDict()
 
 	# encoder
@@ -142,7 +138,7 @@ if len(sys.argv) < 3:
 
 else:
 	# restore from saved weights
-	params = np.load(sys.argv[2])
+	params = np.load(args.load)
 
 tparams = OrderedDict()
 for key, val in params.iteritems():
@@ -150,7 +146,7 @@ for key, val in params.iteritems():
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training graph
-if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
+if args.mode == 'train':
 	print "Constructing graph for training"
 	# create shared variables for dataset for easier access
 	top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
@@ -163,8 +159,8 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
 	gt = train_gt[img_ids,:]
-	# repeat k-times to compensate for the samping process
-	gt = T.extra_ops.repeat(gt, k, axis=0)
+	# repeat args.repeat-times to compensate for the samping process
+	gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
 
 	# inputs for synthetic gradient networks
 	target_gradients = T.matrix('tg', dtype='float32')
@@ -191,13 +187,13 @@ out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
 
-# repeat k-times so that for every input in a minibatch, there are k samples
-latent_probs = T.extra_ops.repeat(out3, k, axis=0)
+# repeat args.repeat-times so that for every input in a minibatch, there are args.repeat samples
+latent_probs = T.extra_ops.repeat(out3, args.repeat, axis=0)
 
 if "gpu" in theano.config.device:
-	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
+	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=args.random_seed)
 else:
-	srng = T.shared_randomstreams.RandomStreams(seed=seed)
+	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
 # sample a bernoulli distribution, which a binomial of 1 iteration
 latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
@@ -208,7 +204,7 @@ outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
 probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
 # Training
-if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
+if args.mode == 'train':
 
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 	print "Computing synthetic gradients"
@@ -262,12 +258,13 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
 	
 	print "Training"
-	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
 	id_order = range(len(trc))
 
 	iters = 0
 	min_cost = 100000.0
 	epoch = 0
+	condition = False
 
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
@@ -276,17 +273,17 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 		epoch_cost = 0.
 		epoch_cost_sg = 0.
 		epoch_start = time.time()
-		for batch_id in range(len(trc)/batch_size):
+		for batch_id in range(len(trc)/args.batch_size):
 			batch_start = time.time()
 			iters += 1
 
-			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
+			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 			cost, t, ls = f_grad_shared(idlist)	
-			f_update(learning_rate)
+			f_update(args.learning_rate)
 			cost_sg = 'NC'
-			if iters % k == 0 and not np.isnan((t**2).sum()):
+			if iters % args.repeat == 0 and not np.isnan((t**2).sum()):
 				cost_sg = f_grad_shared_sg(idlist, ls, t)
-				f_update_sg(learning_rate)
+				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
 			elif np.isnan((t**2).sum()):
 				print "NaN encountered at", iters	
@@ -297,8 +294,8 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 
 		print ": Cost " + str(epoch_cost) + " : SG Cost " + str(epoch_cost_sg) + " : Time " + str(time.time() - epoch_start)
 		
-		# save every save_freq epochs
-		if (epoch + 1) % save_freq == 0:
+		# save every args.save_freq epochs
+		if (epoch + 1) % args.save_freq == 0:
 			print "Saving..."
 
 			params = {}
@@ -306,17 +303,17 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
-		if term_condition == 'c' and min_cost < minbatch_cost:
+		if args.term_condition == 'mincost' and min_cost < args.min_cost:
 			condition = True
-		elif term_condition == 'e' and epoch >= max_epochs:
+		elif args.term_condition == 'epochs' and epoch >= num_epochs:
 			condition = True
 	
 	# saving the final model
-	if epoch % save_freq != 0:
+	if epoch % args.save_freq != 0:
 		print "Saving..."
 
 		params = {}
@@ -324,7 +321,7 @@ if len(sys.argv) < 2 or int(sys.argv[1]) == 0:
 			params[key] = val.get_value()
 
 		# numpy saving
-		np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch) + '.npz', **params)
+		np.savez('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 # Test
