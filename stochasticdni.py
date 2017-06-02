@@ -36,6 +36,12 @@ parser.add_argument('-s','--save_freq', type=int, default=5,
 
 args = parser.parse_args()
 
+# initialize random streams
+if "gpu" in theano.config.device:
+	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=args.random_seed)
+else:
+	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
+
 code_name = 'sg_inp_act_lin_' + str(args.repeat)
 estimator = 'synthetic_gradients'
 
@@ -190,11 +196,6 @@ out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
 # repeat args.repeat-times so that for every input in a minibatch, there are args.repeat samples
 latent_probs = T.extra_ops.repeat(out3, args.repeat, axis=0)
 
-if "gpu" in theano.config.device:
-	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=args.random_seed)
-else:
-	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
-
 # sample a bernoulli distribution, which a binomial of 1 iteration
 latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 
@@ -202,6 +203,7 @@ latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dty
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
 outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
 probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training
 if args.mode == 'train':

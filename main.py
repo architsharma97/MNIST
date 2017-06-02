@@ -26,8 +26,12 @@ parser.add_argument('-m', '--mode', type=int, default=0, help='0 for train, 1 fo
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
 args = parser.parse_args()
 
-# random seed 
+# random seed and initialization of stream
 seed = 42
+if "gpu" in theano.config.device:
+	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
+else:
+	srng = T.shared_randomstreams.RandomStreams(seed=seed)
 
 # save every save_freq epochs
 save_freq = 25
@@ -181,11 +185,6 @@ else:
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
-if "gpu" in theano.config.device:
-	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
-else:
-	srng = T.shared_randomstreams.RandomStreams(seed=seed)
-
 # latent parameters
 if latent_type == 'cont':
 	mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
@@ -228,6 +227,7 @@ elif latent_type == 'disc':
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
 outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
 probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training
 if args.mode == 0:
