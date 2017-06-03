@@ -35,7 +35,7 @@ parser.add_argument('-s','--save_freq', type=int, default=5,
 					help='Number of epochs after which weights should be saved')
 parser.add_argument('-x','--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
-parser.add_argument('-f', '--base_code', type=str, default=None,
+parser.add_argument('-f', '--base_code', type=str, default='sg_inp_act_lin',
 					help='A unique identifier for saving purposes')
 parser.add_argument('-p', '--clip_probs', type=int, default=1,
 					help='clip latent probabilities (0) or not (1), useful for testing training under NaNs')
@@ -47,10 +47,7 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-if args.base_code is None:
-	code_name = 'sg_inp_act_lin_' + str(args.repeat)
-else:
-	code_name = args.base_code + '_' + str(args.repeat)
+code_name = args.base_code + '_' + str(args.repeat)
 
 estimator = 'synthetic_gradients'
 
