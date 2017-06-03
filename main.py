@@ -272,7 +272,9 @@ if args.mode == 0:
 			cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
 			
 		elif latent_type =='disc':
-			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+			# for stability of gradients
+			latent_probs_clipped = T.clip(latent_probs, 0.001, 0.999)
+			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 		# regularization
 		weights_sum_enc = 0.

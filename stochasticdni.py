@@ -225,7 +225,9 @@ if args.mode == 'train':
 	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
 	print "Computing gradients wrt to encoder parameters"
-	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+	# clipping for stability of gradients
+	latent_probs_clipped = T.clip(latent_probs, 0.001, 0.999)
+	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
@@ -283,10 +285,12 @@ if args.mode == 'train':
 			cost, t, ls = f_grad_shared(idlist)	
 			f_update(args.learning_rate)
 			cost_sg = 'NC'
+			
 			if iters % args.repeat == 0 and not np.isnan((t**2).sum()):
 				cost_sg = f_grad_shared_sg(idlist, ls, t)
 				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
+			
 			elif np.isnan((t**2).sum()):
 				print "NaN encountered at", iters	
 			
@@ -311,7 +315,7 @@ if args.mode == 'train':
 		epoch += 1
 		if args.term_condition == 'mincost' and min_cost < args.min_cost:
 			condition = True
-		elif args.term_condition == 'epochs' and epoch >= num_epochs:
+		elif args.term_condition == 'epochs' and epoch >= args.num_epochs:
 			condition = True
 	
 	# saving the final model
