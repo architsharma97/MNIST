@@ -226,7 +226,7 @@ if args.mode == 'train':
 
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
-	latent_probs_clipped = T.clip(latent_probs, 0.001, 0.999)
+	latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
 	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
