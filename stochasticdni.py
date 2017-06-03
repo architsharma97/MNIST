@@ -42,7 +42,7 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-code_name = 'sg_inp_act_lin_' + str(args.repeat)
+code_name = 'sg_inp_act_lin_no_clip_' + str(args.repeat)
 estimator = 'synthetic_gradients'
 
 delta = 1e-10
@@ -226,8 +226,8 @@ if args.mode == 'train':
 
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
-	latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
-	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+	# latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
+	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
@@ -291,8 +291,8 @@ if args.mode == 'train':
 				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
 			
-			elif np.isnan((t**2).sum()):
-				print "NaN encountered at", iters	
+			# elif np.isnan((t**2).sum()):
+			# 	print "NaN encountered at", iters	
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
