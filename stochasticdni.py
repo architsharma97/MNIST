@@ -35,6 +35,10 @@ parser.add_argument('-s','--save_freq', type=int, default=5,
 					help='Number of epochs after which weights should be saved')
 parser.add_argument('-x','--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
+parser.add_argument('-f', '--base_code', type=str, default=None,
+					help='A unique identifier for saving purposes')
+parser.add_argument('-p', '--clip_probs', type=int, default=1,
+					help='clip latent probabilities (0) or not (1), useful for testing training under NaNs')
 args = parser.parse_args()
 
 # initialize random streams
@@ -43,7 +47,11 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-code_name = 'sg_inp_act_lin_no_clip_' + str(args.repeat)
+if args.base_code is None:
+	code_name = 'sg_inp_act_lin_' + str(args.repeat)
+else:
+	code_name = args.base_code + '_' + str(args.repeat)
+
 estimator = 'synthetic_gradients'
 
 delta = 1e-10
@@ -246,8 +254,11 @@ if args.mode == 'train':
 
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
-	latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
-	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+	if args.clip_probs == 1:
+		latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
+	elif args.clip_probs == 0:
+		latent_probs_clipped = latent_probs
+	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
