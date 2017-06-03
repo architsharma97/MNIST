@@ -33,7 +33,8 @@ parser.add_argument('-c','--min_cost', type=float, default=55.0,
 					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
 parser.add_argument('-s','--save_freq', type=int, default=5, 
 					help='Number of epochs after which weights should be saved')
-
+parser.add_argument('-x','--sg_type',type=str, default='lin', 
+					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
 args = parser.parse_args()
 
 # initialize random streams
@@ -42,7 +43,7 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-code_name = 'sg_inp_act_lin_no_clip_' + str(args.repeat)
+code_name = 'sg_inp_act_deep_' + str(args.repeat)
 estimator = 'synthetic_gradients'
 
 delta = 1e-10
@@ -58,12 +59,16 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
-	params[_concat(prefix,'W')] = init_weights(nin, nout, type_init='ortho')
-	params[_concat(prefix,'b')] = np.zeros((nout,)).astype('float32')
+	if zero_init:
+		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
+	else:
+		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho')
+	
+	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
 
 	return params
 
@@ -87,15 +92,24 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	'''
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
+	global args
 	if not zero_init:
-		params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
-		params[_concat(prefix, 'C')] = init_weights(14*28, units, type_init='ortho')
-	
-	else:
-		params[_concat(prefix, 'W')] = np.zeros((units, units)).astype('float32')
-		params[_concat(prefix, 'C')] = np.zeros((14*28, units)).astype('float32')
+		if args.sg_type == 'lin':
+			params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
+			params[_concat(prefix, 'C')] = init_weights(14*28, units, type_init='ortho')
+			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
-	params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32') 
+	else:
+		if args.sg_type == 'lin':
+			params[_concat(prefix, 'W')] = np.zeros((units, units)).astype('float32')
+			params[_concat(prefix, 'C')] = np.zeros((14*28, units)).astype('float32')
+			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
+
+		elif args.sg_type == 'deep':
+			params = param_init_fflayer(params, _concat(prefix, 'A'), units, 512)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), 14*28, 512)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 512 + 512, 512)
+			params = param_init_fflayer(params, _concat(prefix, 'o'), 512, units, zero_init=True)
 
 	return params
 
@@ -103,8 +117,14 @@ def synth_grad(tparams, prefix, activation, input_img):
 	'''
 	Synthetic gradient estimation using a linear model
 	'''
-	return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(input_img, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
-
+	global args
+	if args.sg_type == 'lin':
+		return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(input_img, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
+	elif args.sg_type == 'deep':
+		outa = fflayer(tparams, activation, _concat(prefix, 'A'), nonlin='relu')
+		outi = fflayer(tparams, input_img, _concat(prefix, 'I'), nonlin='relu')
+		outh = fflayer(tparams, T.concatenate([outa, outi], axis=1), _concat(prefix,'H'), nonlin='relu')
+		return fflayer(tparams, outh, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 print "Creating partial images"
 # collect training data and converts image into binary and does row major flattening
@@ -226,8 +246,8 @@ if args.mode == 'train':
 
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
-	# latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
-	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs, latent_samples).sum(axis=1))
+	latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
+	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
@@ -291,8 +311,8 @@ if args.mode == 'train':
 				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
 			
-			# elif np.isnan((t**2).sum()):
-			# 	print "NaN encountered at", iters	
+			elif np.isnan((t**2).sum()):
+				print "NaN encountered at", iters	
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
