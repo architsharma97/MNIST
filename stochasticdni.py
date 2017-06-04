@@ -19,6 +19,8 @@ Bernoulli latent variables with REINFORCE estimators are the baseline for compar
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
+parser.add_argument('-u', '--update_style', type=str, default='fixed', 
+					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-m', '--mode', type=str, default='train', help='train or test')
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
 parser.add_argument('-a', '--learning_rate', type=float, default=0.001, help='Learning rate')
@@ -35,10 +37,11 @@ parser.add_argument('-s','--save_freq', type=int, default=5,
 					help='Number of epochs after which weights should be saved')
 parser.add_argument('-x','--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
-parser.add_argument('-f', '--base_code', type=str, default='sg_inp_act_lin',
+parser.add_argument('-f', '--base_code', type=str, default='sg',
 					help='A unique identifier for saving purposes')
 parser.add_argument('-p', '--clip_probs', type=int, default=1,
-					help='clip latent probabilities (0) or not (1), useful for testing training under NaNs')
+					help='clip latent probabilities (1) or not (0), useful for testing training under NaNs')
+
 args = parser.parse_args()
 
 # initialize random streams
@@ -46,6 +49,7 @@ if "gpu" in theano.config.device:
 	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=args.random_seed)
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
+
 
 code_name = args.base_code + '_' + str(args.repeat)
 
@@ -111,10 +115,10 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		elif args.sg_type == 'deep':
-			params = param_init_fflayer(params, _concat(prefix, 'A'), units, 512)
-			params = param_init_fflayer(params, _concat(prefix, 'I'), 14*28, 512)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 512 + 512, 512)
-			params = param_init_fflayer(params, _concat(prefix, 'o'), 512, units, zero_init=True)
+			params = param_init_fflayer(params, _concat(prefix, 'A'), units, 256)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), 14*28, 256)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 256 + 256, 256)
+			params = param_init_fflayer(params, _concat(prefix, 'o'), 256, units, zero_init=True)
 
 	return params
 
@@ -125,6 +129,7 @@ def synth_grad(tparams, prefix, activation, input_img):
 	global args
 	if args.sg_type == 'lin':
 		return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(input_img, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
+	
 	elif args.sg_type == 'deep':
 		outa = fflayer(tparams, activation, _concat(prefix, 'A'), nonlin='relu')
 		outi = fflayer(tparams, input_img, _concat(prefix, 'I'), nonlin='relu')
@@ -297,6 +302,10 @@ if args.mode == 'train':
 	min_cost = 100000.0
 	epoch = 0
 	condition = False
+	if args.update_style == 'fixed':
+		update_freq = args.repeat
+	elif args.update_style == 'decay':
+		update_freq = 1
 
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
@@ -314,13 +323,26 @@ if args.mode == 'train':
 			f_update(args.learning_rate)
 			cost_sg = 'NC'
 			
-			if iters % args.repeat == 0 and not np.isnan((t**2).sum()):
+			if iters % update_freq == 0 and not np.isnan((t**2).sum()):
 				cost_sg = f_grad_shared_sg(idlist, ls, t)
 				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
 			
 			# elif np.isnan((t**2).sum()):
 			# 	print "NaN encountered at", iters	
+			
+			# decay mode
+			if args.update_style == 'decay':
+				 if iters == 2000:
+				 	update_freq = 2
+				 elif iters == 5000:
+				 	update_freq = 5
+				 elif iters == 10000:
+				 	update_freq = 10
+				 elif iters == 20000:
+				 	update_freq = 50
+				 elif iters == 30000:
+			 		update_freq = 100
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
