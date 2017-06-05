@@ -17,16 +17,23 @@ Bernoulli latent variables with REINFORCE estimators are the baseline for compar
 '''
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
+parser.add_argument('-m', '--mode', type=str, default='train', help='train or test')
 
+# meta-parameters, governs networks and their training
 parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
 parser.add_argument('-u', '--update_style', type=str, default='fixed', 
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
-parser.add_argument('-m', '--mode', type=str, default='train', help='train or test')
+parser.add_argument('-x', '--sg_type',type=str, default='lin', 
+					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
+
+# while testing
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
+
+# hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.001, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
-parser.add_argument('-e', '--random_seed', type=int, default=42, help='Seed to initialize random streams')
-parser.add_argument('-o', '--latent_type', type=str, default='disc', help='No other options')
+
+# additional training and saving related arguments
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
 					help='Training terminates either when number of epochs are completed (epochs) or when minimum cost is achieved for a batch (mincost)')
 parser.add_argument('-n', '--num_epochs', type=int, default=100, 
@@ -35,10 +42,12 @@ parser.add_argument('-c', '--min_cost', type=float, default=55.0,
 					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
 parser.add_argument('-s', '--save_freq', type=int, default=5, 
 					help='Number of epochs after which weights should be saved')
-parser.add_argument('-x', '--sg_type',type=str, default='lin', 
-					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
 parser.add_argument('-f', '--base_code', type=str, default='sg',
 					help='A unique identifier for saving purposes')
+
+# miscellaneous
+parser.add_argument('-e', '--random_seed', type=int, default=42, help='Seed to initialize random streams')
+parser.add_argument('-o', '--latent_type', type=str, default='disc', help='No other options')
 parser.add_argument('-p', '--clip_probs', type=int, default=1,
 					help='clip latent probabilities (1) or not (0), useful for testing training under NaNs')
 
