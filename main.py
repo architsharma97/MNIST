@@ -20,48 +20,67 @@ Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling m
 '''
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
+# training configuration
+parser.add_argument('-h', '--mode', type=str, default='train', 
+					help='train or test, note you still have to set the configure the latent type and estimator for proper testing.')
+parser.add_argument('-e','--estimator', type=str, default='SF',
+					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF) or Path Derivative (PD)')
+parser.add_argument('-o', '--latent_type', type=str, default='disc', 
+					help='Either discrete bernoulli (disc) or continous gaussian (cont)')
 
-parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
-parser.add_argument('-m', '--mode', type=int, default=0, help='0 for train, 1 for test')
+# using REINFORCE
+parser.add_argument('-r', '--repeat', type=int, default=1, 
+					help='Determines the number of samples per training example for SF estimator, not to be provided with PD estimator')
+
+# gumbel-softmax configuration which is used for PD estimators with discrete latent variables
+parser.add_argument('-g', '--sample_style', type=int, default=0,
+					help='Gumbel-softmax sampling can be followed up by hard sampling (1). It would ensure that the sampled vector contains 1s and 0s.')
+# while testing
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
+
+# hyperparameters
+parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
+parser.add_argument('-c', '--regularization', type=float, default=0., help='Regularization constant')
+
+
+
+# termination of training
+parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
+					help='Training terminates either when number of epochs are completed (epochs) or when minimum cost is achieved for a batch (mincost)')
+parser.add_argument('-n', '--num_epochs', type=int, default=1000, 
+					help='Number of epochs, to be specified when termination condition is epochs')
+parser.add_argument('-m', '--min_cost', type=float, default=55.0, 
+					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
+
+# saving
+parser.add_argument('-s', '--save_freq', type=int, default=100, 
+					help='Number of epochs after which weights should be saved')
+parser.add_argument('-f', '--base_code', type=str, default='',
+					help='A unique identifier for saving purposes')
+
+# miscellaneous
+parser.add_argument('-p', '--clip_probs', type=int, default=1,
+					help='clip latent probabilities (1) or not (0), useful for testing training under NaNs')
+parser.add_argument('-q', '--random_seed', type=int, default=42, help='Seed to initialize random streams')
+
 args = parser.parse_args()
 
 # random seed and initialization of stream
-seed = 42
 if "gpu" in theano.config.device:
-	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=seed)
+	srng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed=args.random_seed)
 else:
-	srng = T.shared_randomstreams.RandomStreams(seed=seed)
+	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-# save every save_freq epochs
-save_freq = 25
-
-# either max epochs ('e') or minimum loss levels for a minibatch ('c')
-term_condition = 'e'
-max_epochs = 1000
-minbatch_cost = 55.0
-condition = False
-
-batch_size = 100
-# choose between 'PD' and 'SF' estimator
-estimator = 'SF'
-
-# number of samples per training example, okay to provide if training and using SF estimator
-k = args.repeat
 # used for parameter saving and cost reports
-code_name = 'sf_' + str(k) 
+if estimator == 'PD':
+	code_name = args.base_code
+else:
+	code_name = args.base_code + str(args.repeat) 
 
 # for numerical stability
 delta = 1e-10
-# for regularization of encoder weights
-lmbda = 0.
 
-# 'cont' => gaussian, 'disc' => bernoulli
-latent_type = 'disc'
-learning_rate = 0.0001
-
-# if using PD estimators with bernoulli variables
-hard_sample = True
 temperature_init = 1.0
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -127,11 +146,11 @@ if args.load is None:
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
 	# latent distribution parameters
-	if latent_type == 'cont':
+	if args.latent_type == 'cont':
 		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
 		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
 	
-	elif latent_type == 'disc':
+	elif args.latent_type == 'disc':
 		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
 
 	# decoder parameters
@@ -162,8 +181,8 @@ if args.mode == 0:
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
 	gt = train_gt[img_ids,:]
-	if estimator == 'SF':
-		gt = T.extra_ops.repeat(gt, k, axis=0)
+	if args.estimator == 'SF':
+		gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
 
 # Test graph
 else:
@@ -186,7 +205,7 @@ out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
 
 # latent parameters
-if latent_type == 'cont':
+if args.latent_type == 'cont':
 	mu = fflayer(tparams, out2, _concat(ff_e, 'mu'), nonlin=None)
 	sd = fflayer(tparams, out2, _concat(ff_e, 'sd'), nonlin='softplus')
 
@@ -194,17 +213,17 @@ if latent_type == 'cont':
 	eps = srng.normal(mu.shape)
 	latent_samples = mu + sd * eps
 
-elif latent_type == 'disc':
+elif args.latent_type == 'disc':
 	
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
 
-	if estimator == 'SF':
-		latent_probs = T.extra_ops.repeat(latent_probs, k, axis=0)
+	if args.estimator == 'SF':
+		latent_probs = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 	
-	elif estimator == 'PD':
+	elif args.estimator == 'PD':
 		# sample a gumbel-softmax distribution
 		temperature = T.scalar('temp', dtype='float32')
 		latent_probs_c = 1. - latent_probs
@@ -217,7 +236,7 @@ elif latent_type == 'disc':
 		e_x = T.exp(latent_samples_unnormalized - latent_samples_unnormalized.max(axis=0, keepdims=True))
 		latent_samples_soft = e_x / e_x.sum(axis=0, keepdims=True)
 		
-		if hard_sample:
+		if args.sample_style == 1:
 			dummy = latent_samples_soft[1,:,:] > 0.5 - latent_samples_soft[1, :, :]
 			latent_samples = latent_samples_soft[1,:,:] + dummy
 		else:
@@ -235,19 +254,19 @@ if args.mode == 0:
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
 	# Uses the reparametrization trick
-	if estimator == 'PD':
+	if args.estimator == 'PD':
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
 		param_list = [val for key, val in tparams.iteritems()]
 		
-		if latent_type == 'disc' and hard_sample == True:
+		if args.latent_type == 'disc' and args.sample_style == 1:
 			# equivalent to stop_gradient trick in tensorflow
 			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
 		
-		elif latent_type == 'cont':
+		elif args.latent_type == 'cont':
 			grads = T.grad(cost, wrt=param_list)
 
-	if estimator == 'SF':
+	if args.estimator == 'SF':
 		print "Computing gradient estimators using REINFORCE"
 
 		# separate parameters for encoder and decoder
@@ -263,15 +282,15 @@ if args.mode == 0:
 		weights_sum_dec = 0.
 		for val in param_dec:
 			weights_sum_dec += (val**2).sum()
-		cost_decoder += lmbda * weights_sum_dec
+		cost_decoder += args.regularization * weights_sum_dec
 
 		grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
 		print "Computing gradients wrt to encoder parameters"
-		if latent_type == 'cont':
+		if args.latent_type == 'cont':
 			cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
 			
-		elif latent_type =='disc':
+		elif args.latent_type =='disc':
 			# for stability of gradients
 			latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
 			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
@@ -280,7 +299,7 @@ if args.mode == 0:
 		weights_sum_enc = 0.
 		for val in param_enc:
 			weights_sum_enc += (val**2).sum()
-		cost_encoder += lmbda * weights_sum_enc
+		cost_encoder += args.regularization * weights_sum_enc
 
 		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
 
@@ -293,7 +312,7 @@ if args.mode == 0:
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
-	if estimator == 'PD' and latent_type == 'disc':
+	if args.estimator == 'PD' and args.latent_type == 'disc':
 		inps += [temperature]
 		temperature_min = temperature_init/2.0
 		anneal_rate = 0.00003
@@ -302,13 +321,14 @@ if args.mode == 0:
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
 
 	print "Training"
-	cost_report = open('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
 	id_order = range(len(trc))
 
 	iters = 0
 	cur_temp = temperature_init
 	min_cost = 100000.0
 	epoch = 0
+	condition = False
 
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
@@ -316,11 +336,11 @@ if args.mode == 0:
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
 		epoch_start = time.time()
-		for batch_id in range(len(trc)/batch_size):
+		for batch_id in range(len(trc)/args.batch_size):
 			batch_start = time.time()
 
-			idlist = id_order[batch_id*batch_size:(batch_id+1)*batch_size]
-			if estimator == 'PD' and latent_type == 'disc':
+			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
+			if args.estimator == 'PD' and args.latent_type == 'disc':
 				# fprint(idlist, cur_temp)
 				cost = f_grad_shared(idlist, cur_temp)
 				iters += 1
@@ -331,15 +351,15 @@ if args.mode == 0:
 				cost = f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
 
-			f_update(learning_rate)
+			f_update(args.learning_rate)
 
 			epoch_cost += cost
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		
-		# save every save_freq epochs
-		if (epoch + 1) % save_freq == 0:
+		# save every args.save_freq epochs
+		if (epoch + 1) % args.save_freq == 0:
 			print "Saving..."
 
 			params = {}
@@ -347,17 +367,17 @@ if args.mode == 0:
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
-		if term_condition == 'c' and min_cost < minbatch_cost:
+		if args.term_condition == 'mincost' and min_cost < args.min_cost:
 			condition = True
-		elif term_condition == 'e' and epoch >= max_epochs:
+		elif args.term_condition == 'epochs' and epoch >= args.num_epochs:
 			condition = True
 	
 	# saving the final model
-	if epoch % save_freq != 0:
+	if epoch % args.save_freq != 0:
 		print "Saving..."
 
 		params = {}
@@ -365,7 +385,7 @@ if args.mode == 0:
 			params[key] = val.get_value()
 
 		# numpy saving
-		np.savez('./Results/' + latent_type + '/' + estimator + '/training_' + code_name + '_' + str(batch_size) + '_' + str(learning_rate) + '_' + str(epoch) + '.npz', **params)
+		np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 # Test
@@ -377,12 +397,12 @@ else:
 
 	# compiling test function
 	inps = [img_ids]
-	if estimator == 'PD' and latent_type =='disc':
+	if args.estimator == 'PD' and args.latent_type =='disc':
 		inps += [temperature]
 
 	f = theano.function(inps, [prediction, loss])
 	idx = 10
-	if estimator == 'PD' and latent_type =='disc':
+	if args.estimator == 'PD' and args.latent_type =='disc':
 		pred, loss = f([idx], 0.5)
 	else:
 		pred, loss = f([idx])
