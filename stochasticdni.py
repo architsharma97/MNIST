@@ -25,6 +25,8 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
+parser.add_argument('-v', '--var_red', type=str, default=None,
+					help='Use different control variates for targets, unconditional mean (mr) and conditional mean (cmr)')
 
 # while testing
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
@@ -145,6 +147,7 @@ def synth_grad(tparams, prefix, activation, input_img):
 		outh = fflayer(tparams, T.concatenate([outa, outi], axis=1), _concat(prefix,'H'), nonlin='relu')
 		return fflayer(tparams, outh, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
+
 print "Creating partial images"
 # collect training data and converts image into binary and does row major flattening
 trc = np.asarray([binarize_img(img).flatten() for lbl, img in read(dataset='training', path ='MNIST/')], dtype=np.float32)
@@ -173,9 +176,14 @@ if args.load is None:
 
 	# latent
 	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
+	
 	# synthetic gradient module for the last encoder layer
 	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
-	
+
+	# loss prediction neural network, conditioned on input and output (in this case the whole image), acts as the baseline
+	if args.var_red == 'cmr':	
+		params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
+
 	# decoder parameters
 	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
 	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
@@ -204,7 +212,8 @@ if args.mode == 'train':
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
 	gt = train_gt[img_ids,:]
-	# repeat args.repeat-times to compensate for the samping process
+	
+	# repeat args.repeat-times to compensate for the sampling process
 	gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
 
 	# inputs for synthetic gradient networks
@@ -268,20 +277,45 @@ if args.mode == 'train':
 		latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
 	elif args.clip_probs == 0:
 		latent_probs_clipped = latent_probs
-	cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+	
+	# arguments to be considered constant when computing gradients
+	consider_constant = [reconstruction_loss, latent_samples]
+
+	if args.var_red is None:
+		cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+	
+	elif args.var_red == 'mr':
+		# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
+		cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+	
+	elif args.var_red == 'cmr':
+		# conditional mean is subtracted from the reconstruction loss to lower variance further
+		baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
+		cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+
+		# optimizing the predictor
+		cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
+		
+		params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
+		print "Loss predictor parameters:", params_loss_predictor
+
+		grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
+		consider_constant += [baseline]
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine grads in this order only
-	grads_net = grads_encoder + grads_decoder
+	if args.var_red == 'cmr':
+		grads_net = grads_encoder + grads_plp + grads_decoder
+	else:
+		grads_net = grads_encoder + grads_decoder
 
-	# synthetic gradient sub-network
 	# computing target for synthetic gradient, will be output in every iteration
-	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=[reconstruction_loss, latent_samples])
+	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
 	
-	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), activation, img))**2).sum()
+	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), activation, img)) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
 	cost = cost_decoder
