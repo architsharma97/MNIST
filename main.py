@@ -73,10 +73,10 @@ else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
 # used for parameter saving and cost reports
-if estimator == 'PD':
+if args.estimator == 'PD':
 	code_name = args.base_code
 else:
-	code_name = args.base_code + str(args.repeat) 
+	code_name = args.base_code + '_' + str(args.repeat) 
 
 # for numerical stability
 delta = 1e-10
@@ -168,7 +168,7 @@ for key, val in params.iteritems():
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training graph
-if args.mode == 0:
+if args.mode == 'train':
 	print "Constructing graph for training"
 	# create shared variables for dataset for easier access
 	top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
@@ -249,7 +249,7 @@ probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training
-if args.mode == 0:
+if args.mode == 'train':
 
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
