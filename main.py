@@ -21,7 +21,7 @@ Gumbel-softmax can be used in either hard or soft sampling mode, hard sampling m
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 # training configuration
-parser.add_argument('-h', '--mode', type=str, default='train', 
+parser.add_argument('-m', '--mode', type=str, default='train', 
 					help='train or test, note you still have to set the configure the latent type and estimator for proper testing.')
 parser.add_argument('-e','--estimator', type=str, default='SF',
 					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF) or Path Derivative (PD)')
@@ -50,7 +50,7 @@ parser.add_argument('-t', '--term_condition', type=str, default='epochs',
 					help='Training terminates either when number of epochs are completed (epochs) or when minimum cost is achieved for a batch (mincost)')
 parser.add_argument('-n', '--num_epochs', type=int, default=1000, 
 					help='Number of epochs, to be specified when termination condition is epochs')
-parser.add_argument('-m', '--min_cost', type=float, default=55.0, 
+parser.add_argument('-n', '--min_cost', type=float, default=55.0, 
 					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
 
 # saving
