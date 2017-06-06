@@ -293,7 +293,7 @@ if args.mode == 0:
 		elif args.latent_type =='disc':
 			# for stability of gradients
 			latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
-			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 		# regularization
 		weights_sum_enc = 0.
