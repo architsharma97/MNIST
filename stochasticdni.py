@@ -30,7 +30,7 @@ parser.add_argument('-x', '--sg_type',type=str, default='lin',
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
 
 # hyperparameters
-parser.add_argument('-a', '--learning_rate', type=float, default=0.001, help='Learning rate')
+parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 
 # additional training and saving related arguments
@@ -268,7 +268,7 @@ if args.mode == 'train':
 		latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
 	elif args.clip_probs == 0:
 		latent_probs_clipped = latent_probs
-	cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+	cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
