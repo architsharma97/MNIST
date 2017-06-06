@@ -31,6 +31,8 @@ parser.add_argument('-o', '--latent_type', type=str, default='disc',
 # using REINFORCE
 parser.add_argument('-r', '--repeat', type=int, default=1, 
 					help='Determines the number of samples per training example for SF estimator, not to be provided with PD estimator')
+parser.add_argument('-v', '--var_red', type=str, default=None,
+					help='Use different control variates, unconditional mean (mr) and conditional mean (cmr)')
 
 # gumbel-softmax configuration which is used for PD estimators with discrete latent variables
 parser.add_argument('-g', '--sample_style', type=int, default=0,
@@ -152,7 +154,11 @@ if args.load is None:
 	
 	elif args.latent_type == 'disc':
 		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
-
+		
+		if args.estimator == 'SF' and args.var_red == 'cmr':
+			# loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
+			params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
+	
 	# decoder parameters
 	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
 	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
@@ -179,8 +185,8 @@ if args.mode == 'train':
 
 	# pass a batch of indices while training
 	img_ids = T.vector('ids', dtype='int64')
-	img = train[img_ids,:]
-	gt = train_gt[img_ids,:]
+	img = train[img_ids, :]
+	gt = train_gt[img_ids, :]
 	if args.estimator == 'SF':
 		gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
 
@@ -271,7 +277,7 @@ if args.mode == 'train':
 
 		# separate parameters for encoder and decoder
 		param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
-		param_enc = [val for key, val in tparams.iteritems() if 'ff_dec' not in key]
+		param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
 		print "Encoder parameters:", param_enc
 		print "Decoder parameters: ", param_dec
 
@@ -293,7 +299,29 @@ if args.mode == 'train':
 		elif args.latent_type =='disc':
 			# for stability of gradients
 			latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
-			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			# arguments to be considered constant when computing gradients
+			consider_constant = [reconstruction_loss, latent_samples]
+
+			if args.var_red is None:
+				cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			
+			elif args.var_red == 'mr':
+				# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
+				cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			
+			elif args.var_red == 'cmr':
+				# conditional mean is subtracted from the reconstruction loss to lower variance further
+				baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+
+				# optimizing the predictor
+				cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
+				
+				params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
+				print "Loss predictor parameters:", params_loss_predictor
+
+				grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
+				consider_constant += [baseline]
 
 		# regularization
 		weights_sum_enc = 0.
@@ -301,10 +329,13 @@ if args.mode == 'train':
 			weights_sum_enc += (val**2).sum()
 		cost_encoder += args.regularization * weights_sum_enc
 
-		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[reconstruction_loss, latent_samples])
+		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=consider_constant)
 
 		# combine grads in this order only
-		grads = grads_encoder + grads_decoder
+		if args.estimator == 'SF' and args.var_red == 'cmr':
+			grads = grads_encoder + grads_plp + grads_decoder
+		else:
+			grads = grads_encoder + grads_decoder
 
 		cost = cost_decoder
 
