@@ -50,7 +50,7 @@ parser.add_argument('-t', '--term_condition', type=str, default='epochs',
 					help='Training terminates either when number of epochs are completed (epochs) or when minimum cost is achieved for a batch (mincost)')
 parser.add_argument('-n', '--num_epochs', type=int, default=1000, 
 					help='Number of epochs, to be specified when termination condition is epochs')
-parser.add_argument('-n', '--min_cost', type=float, default=55.0, 
+parser.add_argument('-d', '--min_cost', type=float, default=55.0, 
 					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
 
 # saving
