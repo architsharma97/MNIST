@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # costs_pd_hard = [float(line.split(',')[2]) for idx, line in enumerate(pd_hard) if idx%500 == 0]
 
 # plt.xlim(0,1000)
-plt.ylim(50, 100)
+plt.ylim(40, 100)
 # plt.plot(costs_sf)
 # plt.plot(costs_pd_hard)
 # plt.plot(costs_pd_soft)
@@ -17,11 +17,11 @@ plt.ylim(50, 100)
 for k in [1, 2, 5, 10]:
 	# f = open('Results/disc/SF/training_sf_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	# plt.plot([float(line.split(',')[2]) for idx, line in enumerate(f) if idx % 600 == 0])
-	f = open('Results/disc/SF/training_sf_mean_reduced_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	f = open('Results/disc/SF/training_sf_cmr_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	plt.plot([float(line.split(',')[2]) for idx, line in enumerate(f) if idx % 600 == 0])
 
 plt.grid()
-plt.legend(['SF_mr_1', 'SF_mr_2', 'SF_mr_5', 'SF_mr_10'])
+plt.legend(['SF_cmr_1', 'SF_cmr_2', 'SF_cmr_5', 'SF_cmr_10'])
 
 # plt.savefig('Results/disc/training_plots', ext='png', close=False, verbose=True, dpi=350, bbox_inches='tight', pad_inches=0)
 plt.show()

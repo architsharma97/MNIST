@@ -25,7 +25,7 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
-parser.add_argument('-v', '--var_red', type=str, default=None,
+parser.add_argument('-v', '--var_red', type=str, default='cmr',
 					help='Use different control variates for targets, unconditional mean (mr) and conditional mean (cmr)')
 
 # while testing
@@ -42,7 +42,7 @@ parser.add_argument('-n', '--num_epochs', type=int, default=100,
 					help='Number of epochs, to be specified when termination condition is epochs')
 parser.add_argument('-c', '--min_cost', type=float, default=55.0, 
 					help='Minimum cost to be achieved for a minibatch, to be specified when termination condition is mincost')
-parser.add_argument('-s', '--save_freq', type=int, default=5, 
+parser.add_argument('-s', '--save_freq', type=int, default=100, 
 					help='Number of epochs after which weights should be saved')
 parser.add_argument('-f', '--base_code', type=str, default='sg',
 					help='A unique identifier for saving purposes')
@@ -113,38 +113,35 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
 	global args
+	inp_size = 28*28 + units
 	if not zero_init:
 		if args.sg_type == 'lin':
-			params[_concat(prefix, 'W')] = init_weights(units, units, type_init='ortho')
-			params[_concat(prefix, 'C')] = init_weights(14*28, units, type_init='ortho')
+			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 	else:
 		if args.sg_type == 'lin':
-			params[_concat(prefix, 'W')] = np.zeros((units, units)).astype('float32')
-			params[_concat(prefix, 'C')] = np.zeros((14*28, units)).astype('float32')
+			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		elif args.sg_type == 'deep':
-			params = param_init_fflayer(params, _concat(prefix, 'A'), units, 256)
-			params = param_init_fflayer(params, _concat(prefix, 'I'), 14*28, 256)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 256 + 256, 256)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 256)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 256, 256)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 256, units, zero_init=True)
 
 	return params
 
-def synth_grad(tparams, prefix, activation, input_img):
+def synth_grad(tparams, prefix, inp):
 	'''
 	Synthetic gradient estimation using a linear model
 	'''
 	global args
 	if args.sg_type == 'lin':
-		return T.dot(activation, tparams[_concat(prefix, 'W')]) + T.dot(input_img, tparams[_concat(prefix, 'C')]) + tparams[_concat(prefix, 'b')]
+		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep':
-		outa = fflayer(tparams, activation, _concat(prefix, 'A'), nonlin='relu')
-		outi = fflayer(tparams, input_img, _concat(prefix, 'I'), nonlin='relu')
-		outh = fflayer(tparams, T.concatenate([outa, outi], axis=1), _concat(prefix,'H'), nonlin='relu')
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu')
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu')
 		return fflayer(tparams, outh, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -211,10 +208,10 @@ if args.mode == 'train':
 	# pass a batch of indices while training
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
-	gt = train_gt[img_ids,:]
+	gt_unrepeated = train_gt[img_ids,:]
 	
 	# repeat args.repeat-times to compensate for the sampling process
-	gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
+	gt = T.extra_ops.repeat(gt_unrepeated, args.repeat, axis=0)
 
 	# inputs for synthetic gradient networks
 	target_gradients = T.matrix('tg', dtype='float32')
@@ -290,7 +287,7 @@ if args.mode == 'train':
 	
 	elif args.var_red == 'cmr':
 		# conditional mean is subtracted from the reconstruction loss to lower variance further
-		baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
+		baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
 		cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 		# optimizing the predictor
@@ -303,7 +300,7 @@ if args.mode == 'train':
 		consider_constant += [baseline]
 
 	known_grads = OrderedDict()
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), out3, img)
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated], axis=1))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine grads in this order only
@@ -315,7 +312,7 @@ if args.mode == 'train':
 	# computing target for synthetic gradient, will be output in every iteration
 	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
 	
-	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), activation, img)) ** 2).sum()
+	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
 	cost = cost_decoder
