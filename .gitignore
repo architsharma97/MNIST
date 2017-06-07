@@ -4,3 +4,4 @@ Results/
 Results_VAE/
 *.out
 jobsreports/
+test.py
