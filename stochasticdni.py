@@ -125,9 +125,9 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		elif args.sg_type == 'deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 256)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 256, 256)
-			params = param_init_fflayer(params, _concat(prefix, 'o'), 256, units, zero_init=True)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024)
+			# params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024)
+			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
 
 	return params
 
@@ -141,8 +141,8 @@ def synth_grad(tparams, prefix, inp):
 	
 	elif args.sg_type == 'deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu')
-		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu')
-		return fflayer(tparams, outh, _concat(prefix, 'o'), nonlin=None)
+		# outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu')
+		return fflayer(tparams, outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
