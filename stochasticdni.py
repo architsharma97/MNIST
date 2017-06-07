@@ -79,7 +79,7 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout, zero_init=False):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
@@ -89,14 +89,27 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False):
 		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho')
 	
 	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
-
+	
+	if batchnorm:
+		params[_concat(prefix, 'g')] = np.ones((nout,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((nout,)).astype('float32')
+	
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh'):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=False):
 	'''
 	A feedforward layer
 	'''
 	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	
+	# currently only valid for batchnorm in training
+	if batchnorm:
+		axes = (0,)
+		mean = preact.mean(axes, keepdims=True)
+		var = preact.var(axes, keepdims=True)
+		invstd = T.inv(T.sqrt(var + 1e-4))
+		preact = (preact - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
+
 	if nonlin == None:
 		return preact
 	elif nonlin == 'tanh':
@@ -125,8 +138,8 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		elif args.sg_type == 'deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024)
-			# params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
 
 	return params
@@ -140,9 +153,9 @@ def synth_grad(tparams, prefix, inp):
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep':
-		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu')
-		# outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu')
-		return fflayer(tparams, outi, _concat(prefix, 'o'), nonlin=None)
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
+		return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
