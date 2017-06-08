@@ -24,7 +24,7 @@ parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of sampl
 parser.add_argument('-u', '--update_style', type=str, default='fixed', 
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
-					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep)')
+					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
 parser.add_argument('-v', '--var_red', type=str, default='cmr',
 					help='Use different control variates for targets, unconditional mean (mr) and conditional mean (cmr)')
 
@@ -133,11 +133,11 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 	else:
-		if args.sg_type == 'lin':
+		if args.sg_type == 'lin' or args.sg_type == 'lin_deep':
 			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
-		elif args.sg_type == 'deep':
+		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
@@ -152,10 +152,13 @@ def synth_grad(tparams, prefix, inp):
 	if args.sg_type == 'lin':
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
-	elif args.sg_type == 'deep':
+	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
-		return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+		if args.sg_type == 'deep':
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+		elif args.sg_type == 'lin_deep':
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"

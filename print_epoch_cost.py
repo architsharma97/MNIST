@@ -7,4 +7,3 @@ for i in range(1000):
 	for j in range(600):
 		sum += float(f[i*600 + j].split(',')[2])
 	print "Epoch " + str(i+1) + ":", sum
-
