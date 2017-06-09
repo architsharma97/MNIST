@@ -140,7 +140,6 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
-			# params = param_init_fflayer(params, _concat(prefix, 'T'), 1024, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
 
 	return params
@@ -156,7 +155,6 @@ def synth_grad(tparams, prefix, inp):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
-		# outt = fflayer(tparams, outi + outh, _concat(prefix, 'T'), nonlin='relu', batchnorm=True)
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
@@ -184,7 +182,7 @@ latent_dim = 50
 params = OrderedDict()
 
 # no address provided for weights
-if args.load is None:
+if args.load is None or if args.load is not None:
 	# encoder
 	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
@@ -204,15 +202,13 @@ if args.load is None:
 	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
 	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
 
-else:
+if args.load is not None:
 	# restore from saved weights
 	lparams = np.load(args.load)
 
 	for key, val in lparams.iteritems():
-		params[key] = val
-		 
-	# synthetic gradient module for the last encoder layer
-	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
+		if 'sg' not in key:
+			params[key] = val
 
 tparams = OrderedDict()
 for key, val in params.iteritems():
