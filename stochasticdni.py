@@ -208,6 +208,9 @@ else:
 	# restore from saved weights
 	params = np.load(args.load)
 
+	# synthetic gradient module for the last encoder layer
+	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
+
 tparams = OrderedDict()
 for key, val in params.iteritems():
 	tparams[key] = theano.shared(val, name=key)
