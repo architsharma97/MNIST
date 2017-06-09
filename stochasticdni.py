@@ -158,7 +158,7 @@ def synth_grad(tparams, prefix, inp):
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
-			return T.nnet.nnet.sigmoid(T.dot(inp, tparams[_concat(prefix, 'W')])) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
