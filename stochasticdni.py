@@ -207,8 +207,7 @@ if args.load is not None:
 	lparams = np.load(args.load)
 
 	for key, val in lparams.iteritems():
-		if 'sg' not in key:
-			params[key] = val
+		params[key] = val
 
 tparams = OrderedDict()
 for key, val in params.iteritems():
