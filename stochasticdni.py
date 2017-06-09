@@ -181,10 +181,10 @@ ff_d = 'ff_dec'
 sg = 'sg'
 latent_dim = 50
 
+params = OrderedDict()
+
 # no address provided for weights
 if args.load is None:
-	params = OrderedDict()
-
 	# encoder
 	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
@@ -206,8 +206,11 @@ if args.load is None:
 
 else:
 	# restore from saved weights
-	params = np.load(args.load)
+	lparams = np.load(args.load)
 
+	for key, val in lparams.iteritems():
+		params[key] = val
+		 
 	# synthetic gradient module for the last encoder layer
 	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
 
