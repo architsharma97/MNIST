@@ -182,7 +182,7 @@ latent_dim = 50
 params = OrderedDict()
 
 # no address provided for weights
-if args.load is None or if args.load is not None:
+if args.load is None or args.load is not None:
 	# encoder
 	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
 	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
