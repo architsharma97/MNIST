@@ -126,7 +126,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
 	global args
-	inp_size = 28*28 + units
+	inp_size = 14*28 + units
 	if not zero_init:
 		if args.sg_type == 'lin':
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
@@ -319,7 +319,7 @@ if args.mode == 'train':
 		consider_constant += [baseline]
 
 	known_grads = OrderedDict()
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated], axis=1))
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([out3, gt_unrepeated], axis=1))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine grads in this order only
@@ -331,7 +331,7 @@ if args.mode == 'train':
 	# computing target for synthetic gradient, will be output in every iteration
 	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
 	
-	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated], axis=1))) ** 2).sum()
+	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([activation, gt_unrepeated], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
 	cost = cost_decoder
