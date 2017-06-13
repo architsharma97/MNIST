@@ -126,7 +126,8 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
 	global args
-	inp_size = 14*28 + units
+	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
+	inp_size = 28*28 + units + units
 	if not zero_init:
 		if args.sg_type == 'lin':
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
@@ -236,6 +237,7 @@ if args.mode == 'train':
 	target_gradients = T.matrix('tg', dtype='float32')
 	activation = T.matrix('sg_input_probs', dtype='float32')
 	# also provide the top half of the image as input the synthetic gradient subnetworks
+	latent_gradients = T.matrix('sg_input_latgrads', dtype='float32')
 
 # Test graph
 else:
@@ -286,6 +288,13 @@ if args.mode == 'train':
 	print "Computing gradients wrt to decoder parameters"
 	cost_decoder = T.mean(reconstruction_loss)
 	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
+	
+	# for better estimation, converts into a learnt straight through estimator
+	gradz_unscaled = T.grad(cost_decoder, wrt=latent_samples)
+	gradz = gradz_unscaled[:args.batch_size,:]
+	for i in range(1, args.repeat):
+		gradz += gradz_unscaled[i*args.batch_size: (i+1)*args.batch_size, :]
+	gradz = gradz / args.repeat
 
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
@@ -319,7 +328,7 @@ if args.mode == 'train':
 		consider_constant += [baseline]
 
 	known_grads = OrderedDict()
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([out3, gt_unrepeated], axis=1))
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine grads in this order only
@@ -331,14 +340,14 @@ if args.mode == 'train':
 	# computing target for synthetic gradient, will be output in every iteration
 	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
 	
-	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([activation, gt_unrepeated], axis=1))) ** 2).sum()
+	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
 	cost = cost_decoder
 	lr = T.scalar('lr', dtype='float32')
 
 	inps_net = [img_ids]
-	inps_sg = inps_net + [activation, target_gradients]
+	inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 	tparams_net = OrderedDict()
 	tparams_sg = OrderedDict()
 	for key, val in tparams.iteritems():
@@ -349,7 +358,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3, gradz])
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
 	
 	print "Training"
@@ -377,12 +386,12 @@ if args.mode == 'train':
 			iters += 1
 
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
-			cost, t, ls = f_grad_shared(idlist)	
+			cost, t, ls, gradz = f_grad_shared(idlist)	
 			f_update(args.learning_rate)
 			cost_sg = 'NC'
 			
 			if iters % update_freq == 0 and not np.isnan((t**2).sum()):
-				cost_sg = f_grad_shared_sg(idlist, ls, t)
+				cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
 				f_update_sg(args.learning_rate)
 				epoch_cost_sg += cost_sg
 			

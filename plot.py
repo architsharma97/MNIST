@@ -8,11 +8,11 @@ def smooth(vals):
 		smooth_vals.append(alpha * val + (1. - alpha) * smooth_vals[-1])
 	return smooth_vals
 
-# plt.xlim(0,1000)
+# plt.xlim(0, 100)
 plt.ylim(40, 100)
 
 legend_entries = []
-for k in [1, 2, 5, 10]:
+for k in [1, 10]:
 	f = open('Results/disc/SF/training_sf_cmr_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	vals = [float(line.split(',')[2]) for line in f]
 	smoothened = smooth(vals) 
