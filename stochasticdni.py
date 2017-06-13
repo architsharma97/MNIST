@@ -141,6 +141,8 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, '1'), 1024, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, '2'), 1024, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
 
 	return params
@@ -156,10 +158,12 @@ def synth_grad(tparams, prefix, inp):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
+		out1 = fflayer(tparams, outh + outi, _concat(prefix, '1'), nonlin='relu', batchnorm=True)
+		out2 = fflayer(tparams, outh + out1, _concat(prefix, '2'), nonlin='relu', batchnorm=True)
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, out2 + out1, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
