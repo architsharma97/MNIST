@@ -26,6 +26,8 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
+
+# REINFORCE only meta-parameters
 parser.add_argument('-v', '--var_red', type=str, default='cmr',
 					help='Use different control variates for targets, unconditional mean (mr) and conditional mean (cmr)')
 
@@ -318,6 +320,9 @@ if args.mode == 'train':
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
+	# combine in this order only
+	grads_net = grads_encoder + grads_decoder
+	
 	# ---------------Gradients for synthetic gradient network-------------------------------------------------------------------
 	if args.target == 'REINFORCE':
 		print "Getting REINFORCE target"
@@ -326,13 +331,11 @@ if args.mode == 'train':
 
 		if args.var_red is None:
 			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-			grads_net = grads_encoder + grads_decoder
 
 		elif args.var_red == 'mr':
 			# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
 			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-			grads_net = grads_encoder + grads_decoder
-
+			
 		elif args.var_red == 'cmr':
 			# conditional mean is subtracted from the reconstruction loss to lower variance further
 			baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
@@ -353,11 +356,8 @@ if args.mode == 'train':
 
 	elif args.target == 'ST':
 		print "Getting ST target"
-		consider_constant = [dummy]
-
-		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=consider_constant)
-		grads_net = grads_encoder + grads_decoder
-
+		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=[dummy])
+		
 	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
