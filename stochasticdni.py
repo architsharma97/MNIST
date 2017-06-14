@@ -18,6 +18,7 @@ Bernoulli latent variables with REINFORCE estimators are the baseline for compar
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='train', help='train or test')
+parser.add_argument('-g', '--target', type=str, default='REINFORCE', help='Either ST or REINFORCE')
 
 # meta-parameters, governs networks and their training
 parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
@@ -141,8 +142,6 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
-			params = param_init_fflayer(params, _concat(prefix, '1'), 1024, 1024, batchnorm=True)
-			params = param_init_fflayer(params, _concat(prefix, '2'), 1024, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
 
 	return params
@@ -158,12 +157,10 @@ def synth_grad(tparams, prefix, inp):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
-		out1 = fflayer(tparams, outh + outi, _concat(prefix, '1'), nonlin='relu', batchnorm=True)
-		out2 = fflayer(tparams, outh + out1, _concat(prefix, '2'), nonlin='relu', batchnorm=True)
 		if args.sg_type == 'deep':
-			return fflayer(tparams, out2 + out1, _concat(prefix, 'o'), nonlin=None)
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, out2 + out1, _concat(prefix, 'o'), nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
@@ -199,7 +196,7 @@ if args.load is None or args.load is not None:
 	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
 
 	# loss prediction neural network, conditioned on input and output (in this case the whole image), acts as the baseline
-	if args.var_red == 'cmr':	
+	if args.target == 'REINFORCE' and args.var_red == 'cmr':	
 		params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
 
 	# decoder parameters
@@ -266,8 +263,17 @@ out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
 # repeat args.repeat-times so that for every input in a minibatch, there are args.repeat samples
 latent_probs = T.extra_ops.repeat(out3, args.repeat, axis=0)
 
-# sample a bernoulli distribution, which a binomial of 1 iteration
-latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+if args.mode == 'test' or args.target == 'REINFORCE':
+	# sample a bernoulli distribution, which a binomial of 1 iteration
+	latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+
+elif args.target == 'ST':
+	# sample a bernoulli distribution, which a binomial of 1 iteration
+	latent_samples_uncorrected = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+	
+	# for stop gradients trick
+	dummy = latent_samples_uncorrected - latent_probs
+	latent_samples = latent_probs + dummy
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -277,6 +283,7 @@ probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 
 # Training
 if args.mode == 'train':
+	# --------------------Gradients for main network----------------------------------------------------------------------------
 	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 	print "Computing synthetic gradients"
 
@@ -293,7 +300,7 @@ if args.mode == 'train':
 	cost_decoder = T.mean(reconstruction_loss)
 	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 	
-	# for better estimation, converts into a learnt straight through estimator
+	# for better estimation, converts into a learnt straight through estimator with ST/REINFORCE
 	gradz_unscaled = T.grad(cost_decoder, wrt=latent_samples)
 	gradz = gradz_unscaled[:args.batch_size,:]
 	for i in range(1, args.repeat):
@@ -307,48 +314,57 @@ if args.mode == 'train':
 	elif args.clip_probs == 0:
 		latent_probs_clipped = latent_probs
 	
-	# arguments to be considered constant when computing gradients
-	consider_constant = [reconstruction_loss, latent_samples]
-
-	if args.var_red is None:
-		cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-	
-	elif args.var_red == 'mr':
-		# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
-		cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-	
-	elif args.var_red == 'cmr':
-		# conditional mean is subtracted from the reconstruction loss to lower variance further
-		baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-		cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-
-		# optimizing the predictor
-		cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
-		
-		params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
-		print "Loss predictor parameters:", params_loss_predictor
-
-		grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
-		consider_constant += [baseline]
-
 	known_grads = OrderedDict()
 	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
-	# combine grads in this order only
-	if args.var_red == 'cmr':
-		grads_net = grads_encoder + grads_plp + grads_decoder
-	else:
+	# ---------------Gradients for synthetic gradient network-------------------------------------------------------------------
+	if args.target == 'REINFORCE':
+		print "Getting REINFORCE target"
+		# arguments to be considered constant when computing gradients
+		consider_constant = [reconstruction_loss, latent_samples]
+
+		if args.var_red is None:
+			cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			grads_net = grads_encoder + grads_decoder
+
+		elif args.var_red == 'mr':
+			# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
+			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+			grads_net = grads_encoder + grads_decoder
+
+		elif args.var_red == 'cmr':
+			# conditional mean is subtracted from the reconstruction loss to lower variance further
+			baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
+			cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+
+			# optimizing the predictor
+			cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
+			
+			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
+			print "Loss predictor parameters:", params_loss_predictor
+
+			grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
+			consider_constant += [baseline]
+			grads_net = grads_encoder + grads_plp + grads_decoder
+
+		# computing target for synthetic gradient, will be output in every iteration
+		sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
+
+	elif args.target == 'ST':
+		print "Getting ST target"
+		consider_constant = [dummy]
+
+		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=consider_constant)
 		grads_net = grads_encoder + grads_decoder
 
-	# computing target for synthetic gradient, will be output in every iteration
-	sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
-	
 	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg, wrt=param_sg)
 
-	cost = cost_decoder
+	# ----------------------------------------------General training routine------------------------------------------------------
+	
 	lr = T.scalar('lr', dtype='float32')
+	cost = cost_decoder
 
 	inps_net = [img_ids]
 	inps_sg = inps_net + [activation, target_gradients, latent_gradients]
