@@ -24,13 +24,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--mode', type=str, default='train', 
 					help='train or test, note you still have to set the configure the latent type and estimator for proper testing.')
 parser.add_argument('-e','--estimator', type=str, default='SF',
-					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF) or Path Derivative (PD)')
+					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF), Path Derivative (PD) or Straight Through (ST) with discrete.')
 parser.add_argument('-o', '--latent_type', type=str, default='disc', 
 					help='Either discrete bernoulli (disc) or continous gaussian (cont)')
 
-# using REINFORCE
+# using REINFORCE or ST
 parser.add_argument('-r', '--repeat', type=int, default=1, 
 					help='Determines the number of samples per training example for SF estimator, not to be provided with PD estimator')
+# using REINFORCE
 parser.add_argument('-v', '--var_red', type=str, default=None,
 					help='Use different control variates, unconditional mean (mr) and conditional mean (cmr)')
 
@@ -187,7 +188,7 @@ if args.mode == 'train':
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids, :]
 	gt = train_gt[img_ids, :]
-	if args.estimator == 'SF':
+	if args.estimator == 'SF' or args.estimator == 'ST':
 		gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
 
 # Test graph
@@ -243,10 +244,21 @@ elif args.latent_type == 'disc':
 		latent_samples_soft = e_x / e_x.sum(axis=0, keepdims=True)
 		
 		if args.sample_style == 1:
-			dummy = latent_samples_soft[1,:,:] > 0.5 - latent_samples_soft[1, :, :]
+			dummy = latent_samples_soft[1,:,:] > 0.5 - latent_samples_soft[1,:,:]
 			latent_samples = latent_samples_soft[1,:,:] + dummy
 		else:
 			latent_samples = latent_samples_soft[1,:,:]
+	
+	# straight through estimator
+	elif args.estimator == 'ST':
+		latent_probs = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
+
+		# sample a bernoulli distribution, which a binomial of 1 iteration
+		latent_samples_uncorrected = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+		
+		# for stop gradients trick
+		dummy = latent_samples_uncorrected - latent_probs
+		latent_samples = latent_probs + dummy
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -322,7 +334,7 @@ if args.mode == 'train':
 
 				grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
 				consider_constant += [baseline]
-
+		
 		# regularization
 		weights_sum_enc = 0.
 		for val in param_enc:
@@ -338,6 +350,19 @@ if args.mode == 'train':
 			grads = grads_encoder + grads_decoder
 
 		cost = cost_decoder
+
+
+	if args.estimator == 'ST':
+		print "Computing gradients using ST"
+		cost = T.mean(reconstruction_loss)
+		param_list = [val for key, val in tparams.iteritems()]
+
+		if args.latent_type =='disc':
+			# equivalent to stop_gradient trick in tensorflow
+			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
+
+		elif args.latent_type == 'cont':
+			print "Nothing defined for this state"
 
 	# learning rate
 	lr = T.scalar('lr', dtype='float32')
