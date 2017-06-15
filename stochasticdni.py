@@ -26,6 +26,8 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
+parser.add_argument('-q', '--updates_per_iter', type=int, default=1,
+					help='Number of times the synthetic gradient module is updated every iteration of main network.')
 
 # REINFORCE only meta-parameters
 parser.add_argument('-v', '--var_red', type=str, default='cmr',
@@ -389,10 +391,7 @@ if args.mode == 'train':
 	min_cost = 100000.0
 	epoch = 0
 	condition = False
-	if args.update_style == 'fixed':
-		update_freq = args.repeat
-	elif args.update_style == 'decay':
-		update_freq = 1
+	update_freq = 1
 
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
@@ -411,8 +410,10 @@ if args.mode == 'train':
 			cost_sg = 'NC'
 			
 			if iters % update_freq == 0 and not np.isnan((t**2).sum()):
-				cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
-				f_update_sg(args.learning_rate)
+				for i in range(args.updates_per_iter):
+					cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
+					f_update_sg(args.learning_rate)
+				
 				epoch_cost_sg += cost_sg
 			
 			elif np.isnan((t**2).sum()):
