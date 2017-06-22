@@ -5,3 +5,4 @@ Results_VAE/
 *.out
 jobsreports/
 test.py
+gradcomp.py

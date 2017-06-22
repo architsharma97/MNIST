@@ -140,34 +140,36 @@ ff_e = 'ff_enc'
 ff_d = 'ff_dec'
 latent_dim = 50
 
-# no address provided for weights
-if args.load is None:
-	params = OrderedDict()
 
-	# encoder
-	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
-	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
+params = OrderedDict()
 
-	# latent distribution parameters
-	if args.latent_type == 'cont':
-		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
-		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+# encoder
+params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
+params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
+
+# latent distribution parameters
+if args.latent_type == 'cont':
+	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
+	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+
+elif args.latent_type == 'disc':
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
 	
-	elif args.latent_type == 'disc':
-		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
-		
-		if args.estimator == 'SF' and args.var_red == 'cmr':
-			# loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
-			params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
-	
-	# decoder parameters
-	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
-	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
-	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+	if args.estimator == 'SF' and args.var_red == 'cmr':
+		# loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
+		params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
 
-else:
+# decoder parameters
+params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
+params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
+params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+
+if args.load is not None:
 	# restore from saved weights
-	params = np.load(args.load)
+	lparams = np.load(args.load)
+
+	for key, val in lparams.iteritems():
+		params[key] = val
 
 tparams = OrderedDict()
 for key, val in params.iteritems():

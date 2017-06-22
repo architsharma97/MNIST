@@ -187,29 +187,27 @@ latent_dim = 50
 
 params = OrderedDict()
 
-# no address provided for weights
-if args.load is None or args.load is not None:
-	# encoder
-	params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
-	params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
+# encoder
+params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
+params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
-	# latent
-	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
-	
-	# synthetic gradient module for the last encoder layer
-	params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
+# latent
+params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
 
-	# loss prediction neural network, conditioned on input and output (in this case the whole image), acts as the baseline
-	if args.target == 'REINFORCE' and args.var_red == 'cmr':	
-		params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
+# synthetic gradient module for the last encoder layer
+params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
 
-	# decoder parameters
-	params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
-	params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
-	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+# loss prediction neural network, conditioned on input and output (in this case the whole image), acts as the baseline
+if args.target == 'REINFORCE' and args.var_red == 'cmr':	
+	params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
 
+# decoder parameters
+params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
+params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
+params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+
+# restore from saved weights
 if args.load is not None:
-	# restore from saved weights
 	lparams = np.load(args.load)
 
 	for key, val in lparams.iteritems():
