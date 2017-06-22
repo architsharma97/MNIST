@@ -230,7 +230,8 @@ if args.mode == 'train':
 	gradlp_reinforce = T.grad(cost_encoder, wrt=latent_probs_clipped, consider_constant=consider_constant)
 	gradlp_st = T.grad(cost_decoder, wrt=latent_probs_clipped, consider_constant=[dummy])
 	diff = ((gradlp_st - gradlp_reinforce)**2).sum()
-
+	mean_pos_cos = T.mean(((gradlp_st * gradlp_reinforce).sum(axis=1)) > 0)
+	
 	if args.estimator == 'SF':
 		grads_encoder = grads_encoder_reinforce
 	else:
@@ -242,7 +243,7 @@ if args.mode == 'train':
 	lr = T.scalar('lr', dtype='float32')
 
 	inps = [img_ids]
-	outs = [cost_decoder, diff]
+	outs = [cost_decoder, diff, mean_pos_cos]
 
 	print "Setting up optimizer"
 	f_grad_shared, f_update = adam(lr, tparams, grads, inps, outs)
@@ -267,14 +268,14 @@ if args.mode == 'train':
 			batch_start = time.time()
 
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
-			cost, diffc = f_grad_shared(idlist)	
+			cost, diffc, mpc = f_grad_shared(idlist)	
 			min_cost = min(min_cost, cost)
 
 			f_update(args.learning_rate)
 
 			epoch_cost += cost
 			epoch_diff += diffc
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(diffc) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(diffc) + ',' + str(mpc) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Difference " + str(epoch_diff) + " : Time " + str(time.time() - epoch_start)
 		
