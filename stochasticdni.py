@@ -26,8 +26,12 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
-parser.add_argument('-q', '--updates_per_iter', type=int, default=1,
-					help='Number of times the synthetic gradient module is updated every iteration of main network.')
+
+# update frequencies for main networks and synthetic networks
+parser.add_argument('-q', '--main_update_freq', type=int, default=1,
+					help='Number of iterations after which the main network is updated')
+parser.add_argument('-i', '--sub_update_freq', type=int, default=1,
+					help='Number of iterations after which the deep subnetwork is updated')
 
 # REINFORCE only meta-parameters
 parser.add_argument('-v', '--var_red', type=str, default='cmr',
@@ -312,7 +316,7 @@ if args.mode == 'train':
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
 	if args.clip_probs == 1:
-		latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
+		latent_probs_clipped = T.clip(latent_probs, delta, 1-delta)
 	elif args.clip_probs == 0:
 		latent_probs_clipped = latent_probs
 	
@@ -389,8 +393,7 @@ if args.mode == 'train':
 	min_cost = 100000.0
 	epoch = 0
 	condition = False
-	update_freq = 1
-
+	
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
 
@@ -403,15 +406,18 @@ if args.mode == 'train':
 			iters += 1
 
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
-			cost, t, ls, gradz = f_grad_shared(idlist)	
-			f_update(args.learning_rate)
-			cost_sg = 'NC'
 			
-			if iters % update_freq == 0 and not np.isnan((t**2).sum()):
-				for i in range(args.updates_per_iter):
-					cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
-					f_update_sg(args.learning_rate)
-				
+			# main network update
+			cost, t, ls, gradz = f_grad_shared(idlist)	
+			if iters % args.main_update_freq == 0:
+				f_update(args.learning_rate)
+			
+			# subnetwork update
+			cost_sg = 'NC'
+			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).sum()):
+				cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
+				f_update_sg(args.learning_rate)
+
 				epoch_cost_sg += cost_sg
 			
 			elif np.isnan((t**2).sum()):
@@ -420,15 +426,15 @@ if args.mode == 'train':
 			# decay mode
 			if args.update_style == 'decay':
 				 if iters == 2000:
-				 	update_freq = 2
+				 	args.sub_update_freq = 2
 				 elif iters == 5000:
-				 	update_freq = 5
+				 	args.sub_update_freq = 5
 				 elif iters == 10000:
-				 	update_freq = 10
+				 	args.sub_update_freq = 10
 				 elif iters == 20000:
-				 	update_freq = 50
+				 	args.sub_update_freq = 50
 				 elif iters == 30000:
-			 		update_freq = 100
+			 		args.sub_update_freq = 100
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
