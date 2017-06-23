@@ -27,7 +27,7 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 parser.add_argument('-x', '--sg_type',type=str, default='lin', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
 
-# update frequencies for main networks and synthetic networks
+# update frequencies
 parser.add_argument('-q', '--main_update_freq', type=int, default=1,
 					help='Number of iterations after which the main network is updated')
 parser.add_argument('-i', '--sub_update_freq', type=int, default=1,
@@ -75,7 +75,7 @@ code_name = args.base_code + '_' + str(args.repeat)
 
 estimator = 'synthetic_gradients'
 
-delta = 1e-10
+delta = 1e-8
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # converts images into binary images for simplicity
