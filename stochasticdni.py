@@ -75,7 +75,7 @@ code_name = args.base_code + '_' + str(args.repeat)
 
 estimator = 'synthetic_gradients'
 
-delta = 1e-8
+delta = 1e-7
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # converts images into binary images for simplicity
