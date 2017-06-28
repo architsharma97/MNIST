@@ -3,7 +3,7 @@ import sys
 f = open(sys.argv[1],'r').read().splitlines()
 
 if len(sys.argv) > 2:
-	r = int(sys.arg[2])
+	r = int(sys.argv[2])
 else:
 	r = 1000
 
