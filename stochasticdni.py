@@ -24,7 +24,7 @@ parser.add_argument('-g', '--target', type=str, default='REINFORCE', help='Eithe
 parser.add_argument('-r', '--repeat', type=int, default=1, help='Number of samples per training example for SF estimator')
 parser.add_argument('-u', '--update_style', type=str, default='fixed', 
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
-parser.add_argument('-x', '--sg_type',type=str, default='lin', 
+parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
 
 # update frequencies
@@ -102,22 +102,44 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	if batchnorm:
 		params[_concat(prefix, 'g')] = np.ones((nout,), dtype=np.float32)
 		params[_concat(prefix, 'be')] = np.zeros((nout,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, nout)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, nout), dtype=np.float32)
 	
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=False):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None):
 	'''
 	A feedforward layer
+	Note: None means dropout/batch normalization is not used.
+	Use 'Train' or 'Test' options. 'Test' is used when actually predicting synthetic gradients for the main networks.
 	'''
+	global srng
+
+	# compute preactivation and apply batchnormalization/dropout as required
 	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
-	# currently only valid for batchnorm in training
-	if batchnorm:
+	if batchnorm == 'Train':
 		axes = (0,)
 		mean = preact.mean(axes, keepdims=True)
 		var = preact.var(axes, keepdims=True)
 		invstd = T.inv(T.sqrt(var + 1e-4))
 		preact = (preact - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
+		
+		running_average_factor = 0.1	
+		m = T.cast(T.prod(preact.shape) / T.prod(mean.shape), 'float32')
+		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
+		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+	
+	elif batchnorm == 'Test':
+		preact = (preact - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')]/T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
+	
+	# dropout is carried out with fixed probability
+	if dropout == 'Train':
+		dropmask = srng.binomial(n=1, p=0.5, size=preact.shape, dtype=theano.config.floatX)
+		preact *= dropmask
+	
+	elif dropout == 'Test':
+		preact *= 0.5
 
 	if nonlin == None:
 		return preact
@@ -154,7 +176,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 
 	return params
 
-def synth_grad(tparams, prefix, inp):
+def synth_grad(tparams, prefix, inp, mode='Train'):
 	'''
 	Synthetic gradient estimation using a linear model
 	'''
@@ -163,8 +185,8 @@ def synth_grad(tparams, prefix, inp):
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=True)
-		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=True)
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm=mode, dropout=mode)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm=mode, dropout=mode)
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
@@ -296,7 +318,7 @@ if args.mode == 'train':
 	# separate parameters for encoder, decoder and sg subnetworks
 	param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
 	param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
-	param_sg = [val for key, val in tparams.iteritems() if 'sg' in key]
+	param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
 
 	print "Encoder parameters:", param_enc
 	print "Decoder parameters:", param_dec
@@ -321,7 +343,7 @@ if args.mode == 'train':
 		latent_probs_clipped = latent_probs
 	
 	known_grads = OrderedDict()
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1))
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1), mode='Test')
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -376,7 +398,10 @@ if args.mode == 'train':
 	tparams_sg = OrderedDict()
 	for key, val in tparams.iteritems():
 		print key
-		if 'sg' in key:
+		# running means and running variances should not be included in the list for which gradients are computed
+		if 'rm' in key or 'rv' in key:
+			continue
+		elif 'sg' in key:
 			tparams_sg[key] = val
 		else:
 			tparams_net[key] = val
