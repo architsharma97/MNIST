@@ -43,6 +43,8 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
+parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is kept activated')
+parser.add_argument('-k', '--sg_reg', type=float, default=0.0, help='L2 regularization of subnetwork cost')
 
 # additional training and saving related arguments
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
@@ -113,7 +115,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	Note: None means dropout/batch normalization is not used.
 	Use 'Train' or 'Test' options. 'Test' is used when actually predicting synthetic gradients for the main networks.
 	'''
-	global srng
+	global srng, args
 
 	# compute preactivation and apply batchnormalization/dropout as required
 	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
@@ -135,11 +137,11 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	
 	# dropout is carried out with fixed probability
 	if dropout == 'Train':
-		dropmask = srng.binomial(n=1, p=0.5, size=preact.shape, dtype=theano.config.floatX)
+		dropmask = srng.binomial(n=1, p=args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
 		preact *= dropmask
 	
 	elif dropout == 'Test':
-		preact *= 0.5
+		preact *= args.dropout_prob
 
 	if nonlin == None:
 		return preact
@@ -383,9 +385,14 @@ if args.mode == 'train':
 	elif args.target == 'ST':
 		print "Getting ST target"
 		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=[dummy])
-		
+	
+	# regularization
+	weights_sum_sg = 0.
+	for val in param_sg:
+		weights_sum_sg += (val**2).sum()
+
 	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
-	grads_sg = T.grad(loss_sg, wrt=param_sg)
+	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
