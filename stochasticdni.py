@@ -43,7 +43,7 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
-parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is kept activated')
+parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
 parser.add_argument('-k', '--sg_reg', type=float, default=0.0, help='L2 regularization of subnetwork cost')
 
 # additional training and saving related arguments
@@ -137,11 +137,11 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	
 	# dropout is carried out with fixed probability
 	if dropout == 'Train':
-		dropmask = srng.binomial(n=1, p=args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
+		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
 		preact *= dropmask
 	
 	elif dropout == 'Test':
-		preact *= args.dropout_prob
+		preact *= 1.- args.dropout_prob
 
 	if nonlin == None:
 		return preact
