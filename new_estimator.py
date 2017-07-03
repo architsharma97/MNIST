@@ -25,10 +25,8 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('-e', '--z_corrate', type=float, default=0.0001, help='rate at which latent samples are corrected')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
-parser.add_argument('-c', '--regularization', type=float, default=0., help='Regularization constant')
-
-
 
 # termination of training
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
@@ -177,3 +175,121 @@ latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
 
 # sample a bernoulli distribution, which a binomial of 1 iteration
 latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+
+# decoding
+outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
+outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
+probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+
+if args.mode == 'train':
+
+	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
+
+	# separate parameters for encoder and decoder
+	param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
+	param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
+	print "Encoder parameters:", param_enc
+	print "Decoder parameters: ", param_dec
+
+	param_dec += [latent_samples]
+	cost = T.mean(reconstruction_loss)
+	grads_decoder = T.grad(cost, wrt=param_dec)
+	gradz = grads_decoder[-1]
+	grads_decoder = grads_decoder[:-1]
+
+	z_corr = T.cast((latent_samples - args.z_corrate * gradz) > 0.5, 'float32')
+
+	# for stability of gradients
+	latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
+	cost_encoder = T.mean(-T.nnet.nnet.binary_crossentropy(latent_probs_clipped, z_corr).sum(axis=1))
+	grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=[z_corr])
+
+	grads = grads_encoder + grads_decoder
+
+	# learning rate
+	lr = T.scalar('lr', dtype='float32')
+
+	inps = [img_ids]
+
+	print "Setting up optimizer"
+	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
+
+	print "Training"
+	cost_report = open('./Results/disc/new/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
+	id_order = range(len(trc))
+
+	iters = 0
+	min_cost = 100000.0
+	epoch = 0
+	condition = False
+
+	while condition == False:
+		print "Epoch " + str(epoch + 1),
+
+		np.random.shuffle(id_order)
+		epoch_cost = 0.
+		epoch_start = time.time()
+		for batch_id in range(len(trc)/args.batch_size):
+			batch_start = time.time()
+
+			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
+			cost = f_grad_shared(idlist)	
+			min_cost = min(min_cost, cost)
+			f_update(args.learning_rate)
+
+			epoch_cost += cost
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
+
+		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
+		
+		# save every args.save_freq epochs
+		if (epoch + 1) % args.save_freq == 0:
+			print "Saving..."
+
+			params = {}
+			for key, val in tparams.iteritems():
+				params[key] = val.get_value()
+
+			# numpy saving
+			np.savez('./Results/disc/new/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			print "Done!"
+
+		epoch += 1
+		if args.term_condition == 'mincost' and min_cost < args.min_cost:
+			condition = True
+		elif args.term_condition == 'epochs' and epoch >= args.num_epochs:
+			condition = True
+	
+	# saving the final model
+	if epoch % args.save_freq != 0:
+		print "Saving..."
+
+		params = {}
+		for key, val in tparams.iteritems():
+			params[key] = val.get_value()
+
+		# numpy saving
+		np.savez('./Results/disc/new/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
+		print "Done!"
+
+# Test
+else:
+	# useful for one example at a time only
+	prediction = probs > 0.5
+
+	loss = abs(prediction - gt).sum()
+
+	# compiling test function
+	inps = [img_ids]
+
+	f = theano.function(inps, [prediction, loss])
+	idx = 10
+	pred, loss = f([idx])
+
+	show(tec[idx].reshape(28,28))
+
+	reconstructed_img = np.zeros((28*28,))
+	reconstructed_img[:14*28] = tep[idx][0]
+	reconstructed_img[14*28:] = pred
+	show(reconstructed_img.reshape(28,28))
+	print loss
