@@ -309,7 +309,7 @@ st_samedir = T.cast((st * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_
 
 # bias-variance decomposition of synthetic gradients
 param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
-gradz_raw = T.grad(cost_decoder, wrt=latent_samples)
+gradz_raw = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_samples)
 gradz = gradz_raw.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 
 ez_sg = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, latent_probs, gt_unrepeated, gradz], axis=1), mode='Test')
@@ -327,7 +327,7 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient, latent_probs, gradz, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, true_gradient / args.batch_size, latent_probs, gradz, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
