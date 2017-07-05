@@ -162,8 +162,8 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='Train', dropout=mode)
-		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='Train', dropout=mode)
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='Train', dropout=None)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='Train', dropout=None)
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 		elif args.sg_type == 'lin_deep':
