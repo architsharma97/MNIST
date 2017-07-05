@@ -326,7 +326,7 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -366,7 +366,7 @@ while condition == False:
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, t, ls, gradz, br, vr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
+		cost, t, ls, gradz, br, vr, sr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
@@ -375,7 +375,7 @@ while condition == False:
 		
 		epoch_cost += cost
 		# epoch, batch id, bias-reinforce, variance-reinforce, bias-straight through, variance-straigt through, bias-synthetic gradient, time of computation
-		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
+		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 
