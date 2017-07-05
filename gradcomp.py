@@ -14,7 +14,7 @@ import time
 
 
 '''
-Compares different gradients in terms of bias and variance. Generates 250 latent samples per example with 250-sample REINFORCE considered as the true gradient.
+Compares different gradients in terms of bias, variance and directionality. Generates 250 latent samples per example with 250-sample REINFORCE considered as the true gradient.
 '''
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -297,6 +297,7 @@ temp = T.extra_ops.repeat(true_gradient, args.repeat, axis=0)
 # bias-variance of 1-sample reinforce: expected value for the gradient is the true gradient itself: bias should approximately be zero
 bias2_reinforce = ((reinforce_1.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat - true_gradient) ** 2).sum() / args.batch_size
 var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat * args.batch_size)
+r_samedir = T.cast(reinforce_1 * T.extra_ops.repeat(true_gradient, args.repeat, axis=0)) > 0, 'float32') / args.repeat
 
 # bias-variance decomposition of straight through estimator
 st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy])
