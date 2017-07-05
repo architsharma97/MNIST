@@ -303,6 +303,7 @@ st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, co
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
 var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat * args.batch_size)
+st_samedir = T.cast((ez_st * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
 
 # bias-variance decomposition of synthetic gradients
 param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
@@ -312,6 +313,7 @@ gradz = gradz_raw.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1
 ez_sg = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, latent_probs, gt_unrepeated, gradz], axis=1), mode='Test')
 bias2_sg = ((ez_sg - true_gradient) ** 2).sum() / args.batch_size
 var_sg = ((synth_grad(tparams, _concat(sg, 'r'), T.concatenate([T.extra_ops.repeat(img, args.repeat, axis=0), latent_probs_r, gt, gradz_raw], axis=1), mode='Test') - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.batch_size * args.repeat)
+sg_samedir = T.cast((ez_sg * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
 
 # optimizing the synthetic gradient subnetwork
 loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
@@ -323,7 +325,7 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, bias2_st, var_st, bias2_sg, var_sg]
+outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -363,7 +365,7 @@ while condition == False:
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, t, ls, gradz, br, vr, bs, vs, bsg, vsg = f_grad_shared(idlist)	
+		cost, t, ls, gradz, br, vr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
@@ -372,7 +374,7 @@ while condition == False:
 		
 		epoch_cost += cost
 		# epoch, batch id, bias-reinforce, variance-reinforce, bias-straight through, variance-straigt through, bias-synthetic gradient, time of computation
-		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(bs) + ',' + str(vs) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(time.time() - batch_start) + '\n')
+		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 
