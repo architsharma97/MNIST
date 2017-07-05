@@ -62,20 +62,59 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
-	params[_concat(prefix,'W')] = init_weights(nin, nout, type_init='ortho')
-	params[_concat(prefix,'b')] = np.zeros((nout,)).astype('float32')
-
+	if zero_init:
+		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
+	else:
+		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho')
+	
+	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
+	
+	if batchnorm:
+		params[_concat(prefix, 'g')] = np.ones((nout,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((nout,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, nout)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, nout), dtype=np.float32)
+	
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh'):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None):
 	'''
 	A feedforward layer
+	Note: None means dropout/batch normalization is not used.
+	Use 'Train' or 'Test' options. 'Test' is used when actually predicting synthetic gradients for the main networks.
 	'''
+	global srng, args
+
+	# compute preactivation and apply batchnormalization/dropout as required
 	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	
+	if batchnorm == 'Train':
+		axes = (0,)
+		mean = preact.mean(axes, keepdims=True)
+		var = preact.var(axes, keepdims=True)
+		invstd = T.inv(T.sqrt(var + 1e-4))
+		preact = (preact - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
+		
+		running_average_factor = 0.1	
+		m = T.cast(T.prod(preact.shape) / T.prod(mean.shape), 'float32')
+		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
+		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+	
+	elif batchnorm == 'Test':
+		preact = (preact - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')]/T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
+	
+	# dropout is carried out with fixed probability
+	if dropout == 'Train':
+		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
+		preact *= dropmask
+	
+	elif dropout == 'Test':
+		preact *= 1.- args.dropout_prob
+
 	if nonlin == None:
 		return preact
 	elif nonlin == 'tanh':
@@ -86,6 +125,46 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh'):
 		return T.nnet.nnet.softplus(preact)
 	elif nonlin == 'relu':
 		return T.nnet.nnet.relu(preact)
+
+def param_init_sgmod(params, prefix, units, zero_init=True):
+	'''
+	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
+	'''
+	global args
+	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
+	inp_size = 28*28 + units + units
+	if not zero_init:
+		if args.sg_type == 'lin':
+			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
+			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
+
+	else:
+		if args.sg_type == 'lin' or args.sg_type == 'lin_deep':
+			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
+			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
+
+		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
+
+	return params
+
+def synth_grad(tparams, prefix, inp, mode='Train'):
+	'''
+	Synthetic gradient estimation using a linear model
+	'''
+	global args
+	if args.sg_type == 'lin':
+		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	
+	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='Train', dropout=mode)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='Train', dropout=mode)
+		if args.sg_type == 'deep':
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+		elif args.sg_type == 'lin_deep':
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
@@ -203,11 +282,11 @@ grads = grads_encoder + grads_plp + grads_decoder
 # computation of different gradients, bias and variances: we have already computed true gradient example wise above
 temp = T.extra_ops.repeat(true_gradient, args.repeat, axis=0)
 
-# bias-variance of 1-sample reinforce: expected value for the gradient is the true gradient itself: bias should be zero
+# bias-variance of 1-sample reinforce: expected value for the gradient is the true gradient itself: bias should approximately be zero
 bias2_reinforce = ((reinforce_1.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat - true_gradient) ** 2).sum() / args.batch_size
 var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat * args.batch_size)
 
-# computation of straight-through estimator example wise.
+# bias-variance decomposition of straight through estimator
 st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy])
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
