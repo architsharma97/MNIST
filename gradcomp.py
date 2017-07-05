@@ -281,6 +281,7 @@ grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r] + [latent_
 
 # true gradient is scaled down 100 times example wise and 1-sample reinforce is scaled down by 250*100, otherwise it is correct
 true_gradient = args.batch_size * grads_encoder[-1]
+true_gradient_norm = (true_gradient ** 2).sum() / args.batch_size
 reinforce_1 = args.batch_size * args.repeat * grads_encoder[-2]
 grads_encoder = grads_encoder[:-2]
 
@@ -297,14 +298,14 @@ temp = T.extra_ops.repeat(true_gradient, args.repeat, axis=0)
 # bias-variance of 1-sample reinforce: expected value for the gradient is the true gradient itself: bias should approximately be zero
 bias2_reinforce = ((reinforce_1.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat - true_gradient) ** 2).sum() / args.batch_size
 var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat * args.batch_size)
-r_samedir = T.cast((reinforce_1 * T.extra_ops.repeat(true_gradient, args.repeat, axis=0)).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
+r_samedir = T.cast((reinforce_1 * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # bias-variance decomposition of straight through estimator
 st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy])
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
 var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat * args.batch_size)
-st_samedir = T.cast((ez_st * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
+st_samedir = T.cast((st * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # bias-variance decomposition of synthetic gradients
 param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
@@ -326,7 +327,7 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, true_gradient, latent_probs, gradz, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -366,7 +367,7 @@ while condition == False:
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, t, ls, gradz, br, vr, sr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
+		cost, t, ls, gradz, tgn, br, vr, sr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
@@ -374,8 +375,8 @@ while condition == False:
 		f_update_sg(args.learning_rate)
 		
 		epoch_cost += cost
-		# epoch, batch id, bias-reinforce, variance-reinforce, bias-straight through, variance-straigt through, bias-synthetic gradient, time of computation
-		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
+		# epoch, batch id, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, bias-straight through, variance-straight through, reinforce half-space correlation, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
+		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(tgn) + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 

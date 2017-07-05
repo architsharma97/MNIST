@@ -13,20 +13,20 @@ def smooth(vals):
 
 legend_entries = []
 for k in [250]:
-	# f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
-	# vals = [float(line.split(',')[4]) for line in f]
-	# smoothened = smooth(vals) 
-	# plt.plot(smoothened[::60])
-	# legend_entries += ['1-REINFORCE']
+	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()[:-1]
+	vals = [float(line.split(',')[5]) for line in f]
+	smoothened = smooth(vals) 
+	plt.plot(smoothened[::60])
+	legend_entries += ['1-REINFORCE']
 
-	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
-	vals = [float(line.split(',')[7]) for line in f]
+	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()[:-1]
+	vals = [float(line.split(',')[8]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::60])
 	legend_entries += ['Straight Through']
 
-	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
-	vals = [float(line.split(',')[10]) for line in f]
+	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()[:-1]
+	vals = [float(line.split(',')[11]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::60])
 	legend_entries += ['Synthetic Gradients']
