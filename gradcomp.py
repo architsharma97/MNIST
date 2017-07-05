@@ -26,6 +26,9 @@ parser.add_argument('-r', '--repeat', type=int, default=250,
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
+parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
+					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
+parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
 
 # termination of training
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
@@ -182,6 +185,7 @@ print "Initializing parameters"
 # parameter initializations
 ff_e = 'ff_enc'
 ff_d = 'ff_dec'
+sg = 'sg'
 latent_dim = 50
 
 
@@ -192,6 +196,9 @@ params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
 params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
 
 params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
+
+# synthetic gradient module for the last encoder layer
+params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
 
 # loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
 params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
@@ -225,9 +232,14 @@ train_gt = theano.shared(bot, name='train_gt')
 # pass a batch of indices while training
 img_ids = T.vector('ids', dtype='int64')
 img = train[img_ids, :]
-gt = train_gt[img_ids, :]
+gt_unrepeated = train_gt[img_ids, :]
 
-gt = T.extra_ops.repeat(gt, args.repeat, axis=0)
+gt = T.extra_ops.repeat(gt_unrepeated, args.repeat, axis=0)
+
+# inputs for synthetic gradient networks, provide the top half of the image as well
+target_gradients = T.matrix('tg', dtype='float32')
+activation = T.matrix('sg_input_probs', dtype='float32')
+latent_gradients = T.matrix('sg_input_latgrads', dtype='float32')
 
 # encoding
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
@@ -250,7 +262,7 @@ outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
 probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
-# having large number of latent samples is necessary: multi-sample REINFORCE essentially gives the true gradients at the cost of speed.
+# having large number of latent samples is necessary: multi-sample REINFORCE essentially gives the true gradients at the tradeoff of speed.
 reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
 # separate parameters for encoder and decoder
@@ -292,14 +304,43 @@ ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / arg
 bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
 var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat * args.batch_size)
 
+# bias-variance decomposition of synthetic gradients
+param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
+gradz_raw = T.grad(cost_decoder, wrt=latent_samples)
+gradz = gradz_raw.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+
+ez_sg = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, latent_probs, gt_unrepeated, gradz], axis=1), mode='Test')
+bias2_sg = ((ez_sg - true_gradient) ** 2).sum() / args.batch_size
+var_sg = ((synth_grad(tparams, _concat(sg, 'r'), T.concatenate([T.extra_ops.repeat(img, args.repeat, axis=0), latent_probs_r, gt, gradz_raw], axis=1), mode='Test') - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.batch_size * args.repeat)
+
+# optimizing the synthetic gradient subnetwork
+loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
+grads_sg = T.grad(loss_sg, wrt=param_sg)
+
+# ------------------------------------------------------------------ General training routine ----------------------------------------------------------------------------------
+
 # learning rate
 lr = T.scalar('lr', dtype='float32')
 
-inps = [img_ids]
-outs = [cost_decoder, bias2_reinforce, var_reinforce, bias2_st, var_st]
+inps_net = [img_ids]
+outs = [cost_decoder, true_gradient, latent_probs, gradz, bias2_reinforce, var_reinforce, bias2_st, var_st, bias2_sg, var_sg]
+inps_sg = inps_net + [activation, target_gradients, latent_gradients]
+tparams_net = OrderedDict()
+tparams_sg = OrderedDict()
 
-print "Setting up optimizer"
-f_grad_shared, f_update = adam(lr, tparams, grads, inps, outs)
+for key, val in tparams.iteritems():
+	print key
+	# running means and running variances should not be included in the list for which gradients are computed
+	if 'rm' in key or 'rv' in key:
+		continue
+	elif 'sg' in key:
+		tparams_sg[key] = val
+	else:
+		tparams_net[key] = val
+
+print "Setting up optimizers"
+f_grad_shared, f_update = adam(lr, tparams_net, grads, inps_net, outs)
+f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
 
 print "Training"
 cost_report = open('./Results/disc/SF/gradcomp_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -312,23 +353,26 @@ condition = False
 
 while condition == False:
 	print "Epoch " + str(epoch + 1),
-
 	np.random.shuffle(id_order)
 	epoch_cost = 0.
 	epoch_diff = 0.
 	epoch_start = time.time()
+	
 	for batch_id in range(len(trc)/args.batch_size):
 		batch_start = time.time()
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, br, vr, bs, vs = f_grad_shared(idlist)	
+		cost, t, ls, gradz, br, vr, bs, vs, bsg, vsg = f_grad_shared(idlist)	
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
-
+		
+		cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
+		f_update_sg(args.learning_rate)
+		
 		epoch_cost += cost
-		# epoch, batch id, bias-reinforce, variance-reinforce, bias-straight through, variance-straigt through, time of computation
-		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(bs) + ',' + str(vs) + ',' + str(time.time() - batch_start) + '\n')
+		# epoch, batch id, bias-reinforce, variance-reinforce, bias-straight through, variance-straigt through, bias-synthetic gradient, time of computation
+		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(br) + ',' + str(vr) + ',' + str(bs) + ',' + str(vs) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 
