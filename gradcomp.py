@@ -52,7 +52,7 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-code_name = str(args.repeat)
+code_name = 'v2_' + str(args.repeat)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # converts images into binary images for simplicity
