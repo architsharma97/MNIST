@@ -387,6 +387,8 @@ if args.mode == 'train':
 	for val in param_sg:
 		weights_sum_sg += (val**2).sum()
 
+	# normalize target_gradients to have an upper bound on the norm
+	target_gradients = T.switch((target_gradients ** 2).sum() / args.batch_size <= 6.0, target_gradients, (target_gradients * args.batch_size * 6.0) / ((target_gradients ** 2).sum()) )
 	loss_sg = 0.5 * ((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2).sum()
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 
