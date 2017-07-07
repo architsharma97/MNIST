@@ -13,7 +13,7 @@ def smooth(vals):
 
 legend_entries = []
 for k in [1]:
-	f = open('Results/disc/synthetic_gradients/training_test_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	f = open('Results/disc/SF/gradcomp_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	vals = [float(line.split(',')[3]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::60])

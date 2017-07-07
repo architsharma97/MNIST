@@ -97,20 +97,61 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
-	params[_concat(prefix,'W')] = init_weights(nin, nout, type_init='ortho')
-	params[_concat(prefix,'b')] = np.zeros((nout,)).astype('float32')
-
+	if zero_init:
+		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
+	else:
+		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho')
+	
+	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
+	
+	if batchnorm:
+		params[_concat(prefix, 'g')] = np.ones((nin,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((nin,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, nin)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, nin), dtype=np.float32)
+	
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh'):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None):
 	'''
 	A feedforward layer
+	Note: None means dropout/batch normalization is not used.
+	Use 'train' or 'test' options.
 	'''
-	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	global srng, args
+
+	# apply batchnormalization on the input
+	inp = state_below
+
+	if batchnorm == 'train':
+		axes = (0,)
+		mean = inp.mean(axes, keepdims=True)
+		var = inp.var(axes, keepdims=True)
+		invstd = T.inv(T.sqrt(var + 1e-4))
+		inp = (inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
+		
+		running_average_factor = 0.1	
+		m = T.cast(T.prod(inp.shape) / T.prod(mean.shape), 'float32')
+		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
+		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+	
+	elif batchnorm == 'test':
+		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
+	
+	preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+
+	# dropout is carried out with fixed probability
+	if dropout == 'train':
+		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
+		preact *= dropmask
+	
+	elif dropout == 'test':
+		preact *= 1. - args.dropout_prob
+
 	if nonlin == None:
 		return preact
 	elif nonlin == 'tanh':
@@ -143,16 +184,16 @@ latent_dim = 50
 params = OrderedDict()
 
 # encoder
-params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
-params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
+params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200, batchnorm=True)
+params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100, batchnorm=True)
 
 # latent distribution parameters
 if args.latent_type == 'cont':
-	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim)
-	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim)
+	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim, batchnorm=True)
+	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim, batchnorm=True)
 
 elif args.latent_type == 'disc':
-	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim,batchnorm=True)
 	
 	if args.estimator == 'SF' and args.var_red == 'cmr':
 		# loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
@@ -160,8 +201,8 @@ elif args.latent_type == 'disc':
 
 # decoder parameters
 params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
-params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
-params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200, batchnorm=True)
+params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
 
 if args.load is not None:
 	# restore from saved weights
@@ -209,8 +250,8 @@ else:
 
 
 # encoding
-out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
-out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
+out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm=args.mode)
+out2 = fflayer(tparams, out1, _concat(ff_e,'h'), batchnorm=args.mode)
 
 # latent parameters
 if args.latent_type == 'cont':
@@ -223,7 +264,7 @@ if args.latent_type == 'cont':
 
 elif args.latent_type == 'disc':
 	
-	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
+	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=args.mode)
 
 	if args.estimator == 'SF':
 		latent_probs = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
@@ -263,8 +304,8 @@ elif args.latent_type == 'disc':
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
-outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
-probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+outh = fflayer(tparams, outz, _concat(ff_d, 'h'), batchnorm=args.mode)
+probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm=args.mode)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training
@@ -276,7 +317,7 @@ if args.mode == 'train':
 	if args.estimator == 'PD':
 		print "Computing gradient estimators using PD"
 		cost = T.mean(reconstruction_loss)
-		param_list = [val for key, val in tparams.iteritems()]
+		param_list = [val for key, val in tparams.iteritems() if ('rm' not in key and 'rv' not in key)]
 		
 		if args.latent_type == 'disc' and args.sample_style == 1:
 			# equivalent to stop_gradient trick in tensorflow
@@ -289,8 +330,8 @@ if args.mode == 'train':
 		print "Computing gradient estimators using REINFORCE"
 
 		# separate parameters for encoder and decoder
-		param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
-		param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
+		param_dec = [val for key, val in tparams.iteritems() if ('ff_dec' in key) and ('rm' not in key and 'rv' not in key)]
+		param_enc = [val for key, val in tparams.iteritems() if ('ff_enc' in key) and ('rm' not in key and 'rv' not in key)]
 		print "Encoder parameters:", param_enc
 		print "Decoder parameters: ", param_dec
 
@@ -374,8 +415,16 @@ if args.mode == 'train':
 		temperature_min = temperature_init/2.0
 		anneal_rate = 0.00003
 
+	tparams_net = OrderedDict()
+	for key, val in tparams.iteritems():
+		# running means and running variances should not be included in the list for which gradients are computed
+		if 'rm' in key or 'rv' in key:
+			continue
+		else:
+			tparams_net[key] = val
+	
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams, grads, inps, cost)
+	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, cost)
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')

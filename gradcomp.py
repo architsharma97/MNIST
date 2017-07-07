@@ -279,7 +279,7 @@ cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_c
 consider_constant = [reconstruction_loss, latent_samples, baseline]
 grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r] + [latent_probs], consider_constant=consider_constant)
 
-# true gradient is scaled down 100 times example wise and 1-sample reinforce is scaled down by 250*100, otherwise it is correct
+# true gradient is scaled up 100 times example wise and 1-sample reinforce is scaled up by 250*100 to account for the "mean" costs
 true_gradient = args.batch_size * grads_encoder[-1]
 true_gradient_norm = (true_gradient ** 2).sum() / args.batch_size
 reinforce_1 = args.batch_size * args.repeat * grads_encoder[-2]
