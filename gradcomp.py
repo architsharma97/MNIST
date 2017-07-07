@@ -52,7 +52,7 @@ if "gpu" in theano.config.device:
 else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
-code_name = 'v2_' + str(args.repeat)
+code_name = str(args.repeat)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # converts images into binary images for simplicity
@@ -303,6 +303,7 @@ r_samedir = T.cast((reinforce_1 * temp).sum(axis=1) > 0, 'float32').sum() / (arg
 # bias-variance decomposition of straight through estimator
 st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy])
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+ez_st_norm = (ez_st ** 2).sum() / args.batch_size
 bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
 var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat * args.batch_size)
 st_samedir = T.cast((st * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
@@ -313,6 +314,7 @@ gradz_raw = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_samp
 gradz = gradz_raw.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 
 ez_sg = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, latent_probs, gt_unrepeated, gradz], axis=1), mode='Test')
+ez_sg_norm = (ez_sg ** 2).sum() / args.batch_size
 bias2_sg = ((ez_sg - true_gradient) ** 2).sum() / args.batch_size
 var_sg = ((synth_grad(tparams, _concat(sg, 'r'), T.concatenate([T.extra_ops.repeat(img, args.repeat, axis=0), latent_probs_r, gt, gradz_raw], axis=1), mode='Test') - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.batch_size * args.repeat)
 sg_samedir = T.cast((ez_sg * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
@@ -327,7 +329,7 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient / args.batch_size, latent_probs, gradz, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, bias2_st, var_st, st_samedir, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, true_gradient / args.batch_size, latent_probs, gradz, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [activation, target_gradients, latent_gradients]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -367,7 +369,7 @@ while condition == False:
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, t, ls, gradz, tgn, br, vr, sr, bs, vs, ss, bsg, vsg, ssg = f_grad_shared(idlist)	
+		cost, t, ls, gradz, tgn, br, vr, sr, sn, bs, vs, ss, sgn, bsg, vsg, ssg = f_grad_shared(idlist)	
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
@@ -375,8 +377,8 @@ while condition == False:
 		f_update_sg(args.learning_rate)
 		
 		epoch_cost += cost
-		# epoch, batch id, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, bias-straight through, variance-straight through, reinforce half-space correlation, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
-		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(tgn) + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
+		# epoch, batch id, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, straight-through squared norm, bias-straight through, variance-straight through, reinforce half-space correlation, synthetic gradient squared norm, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
+		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(tgn) + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(sn) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(sgn) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 
