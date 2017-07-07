@@ -26,6 +26,8 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
+parser.add_argument('-y', '--sg_inp', type=int, default=5,
+					help='Number of inputs on which the gradient subnetwork is conditioned')
 
 # update frequencies
 parser.add_argument('-q', '--main_update_freq', type=int, default=1,
@@ -161,8 +163,13 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
 	'''
 	global args
+	
 	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
-	inp_size = 28*28 + units * 2
+	inp_list = [14*28, 14*28, units, units, units]
+	inp_size = 0
+	for i in range(args.sg_inp):
+		inp_size += inp_list[i]
+
 	if not zero_init:
 		if args.sg_type == 'lin':
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
@@ -266,12 +273,11 @@ if args.mode == 'train':
 	# repeat args.repeat-times to compensate for the sampling process
 	gt = T.extra_ops.repeat(gt_unrepeated, args.repeat, axis=0)
 
-	# inputs for synthetic gradient networks
+	# inputs for synthetic gradient networks: needs the top half of the image batch
 	target_gradients = T.matrix('tg', dtype='float32')
 	activation = T.matrix('sg_input_probs', dtype='float32')
-	# also provide the top half of the image as input the synthetic gradient subnetworks
 	latent_gradients = T.matrix('sg_input_latgrads', dtype='float32')
-	# samples = T.matrix('sg_input_samples', dtype='float32')
+	samples = T.matrix('sg_input_samples', dtype='float32')
 
 # Test graph
 else:
@@ -344,7 +350,11 @@ if args.mode == 'train':
 		latent_probs_clipped = latent_probs
 	
 	known_grads = OrderedDict()
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, out3, gt_unrepeated, gradz], axis=1), mode='test')
+	var_list = [img, gt_unrepeated, out3, gradz, latent_samples]
+	sg_cond_vars_actual = []
+	for i in range(args.sg_inp):
+		sg_cond_vars_actual += [var_list[i]]
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -393,7 +403,11 @@ if args.mode == 'train':
 	# normalize target_gradients to have an upper bound on the norm
 	# target_gradients = T.switch((target_gradients ** 2).sum() / args.batch_size < 0.0001, target_gradients, (target_gradients * args.batch_size * 0.0001) / ((target_gradients ** 2).sum()) )
 	
-	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img, activation, gt_unrepeated, latent_gradients], axis=1))) ** 2)
+	var_list = [img, gt_unrepeated, activation, latent_gradients, samples]
+	sg_cond_vars_symbol = []
+	for i in range(args.sg_inp):
+		sg_cond_vars_symbol += [var_list[i]]
+	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 
 	# ----------------------------------------------General training routine------------------------------------------------------
@@ -402,7 +416,7 @@ if args.mode == 'train':
 	cost = cost_decoder
 
 	inps_net = [img_ids]
-	inps_sg = inps_net + [activation, target_gradients, latent_gradients]
+	inps_sg = inps_net + [target_gradients] + sg_cond_vars_symbol[2:]
 	tparams_net = OrderedDict()
 	tparams_sg = OrderedDict()
 	for key, val in tparams.iteritems():
@@ -416,7 +430,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3, gradz])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3, gradz, latent_samples])
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
 	
 	print "Training"
@@ -442,14 +456,15 @@ if args.mode == 'train':
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 			
 			# main network update
-			cost, t, ls, gradz = f_grad_shared(idlist)	
+			outs = f_grad_shared(idlist)
+			cost, t = outs[:2]
 			if iters % args.main_update_freq == 0:
 				f_update(args.learning_rate)
 			
 			# subnetwork update
 			cost_sg = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).sum()):
-				cost_sg = f_grad_shared_sg(idlist, ls, t, gradz)
+				cost_sg = f_grad_shared_sg(idlist, t, *outs[2:args.sg_inp])
 				f_update_sg(args.learning_rate)
 
 				epoch_cost_sg += cost_sg
