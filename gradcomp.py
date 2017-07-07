@@ -77,10 +77,10 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
 	
 	if batchnorm:
-		params[_concat(prefix, 'g')] = np.ones((nout,), dtype=np.float32)
-		params[_concat(prefix, 'be')] = np.zeros((nout,)).astype('float32')
-		params[_concat(prefix, 'rm')] = np.zeros((1, nout)).astype('float32')
-		params[_concat(prefix, 'rv')] = np.ones((1, nout), dtype=np.float32)
+		params[_concat(prefix, 'g')] = np.ones((nin,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((nin,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, nin)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, nin), dtype=np.float32)
 	
 	return params
 
@@ -88,35 +88,37 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	'''
 	A feedforward layer
 	Note: None means dropout/batch normalization is not used.
-	Use 'Train' or 'Test' options. 'Test' is used when actually predicting synthetic gradients for the main networks.
+	Use 'train' or 'test' options.
 	'''
-	global srng, args
+	global srng, args, rvparams, rvfunctions
 
-	# compute preactivation and apply batchnormalization/dropout as required
-	preact = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
-	
-	if batchnorm == 'Train':
+	# apply batchnormalization on the input
+	inp = state_below
+
+	if batchnorm == 'train':
 		axes = (0,)
-		mean = preact.mean(axes, keepdims=True)
-		var = preact.var(axes, keepdims=True)
+		mean = inp.mean(axes, keepdims=True)
+		var = inp.var(axes, keepdims=True)
 		invstd = T.inv(T.sqrt(var + 1e-4))
-		preact = (preact - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
+		inp = (inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
 		
 		running_average_factor = 0.1	
-		m = T.cast(T.prod(preact.shape) / T.prod(mean.shape), 'float32')
+		m = T.cast(T.prod(inp.shape) / T.prod(mean.shape), 'float32')
 		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
 		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+		
+	elif batchnorm == 'test':
+		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
 	
-	elif batchnorm == 'Test':
-		preact = (preact - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')]/T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
-	
+	preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+
 	# dropout is carried out with fixed probability
-	if dropout == 'Train':
+	if dropout == 'train':
 		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
 		preact *= dropmask
 	
-	elif dropout == 'Test':
-		preact *= 1.- args.dropout_prob
+	elif dropout == 'test':
+		preact *= 1. - args.dropout_prob
 
 	if nonlin == None:
 		return preact
@@ -149,7 +151,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
-			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True)
+			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True)
 
 	return params
 
@@ -162,12 +164,12 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='Train', dropout=None)
-		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='Train', dropout=None)
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None)
 		if args.sg_type == 'deep':
-			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), bathnorm ='train', nonlin=None)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm='train', nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
@@ -192,10 +194,10 @@ latent_dim = 50
 params = OrderedDict()
 
 # encoder
-params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200)
-params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100)
+params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200, batchnorm=True)
+params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100, batchnorm=True)
 
-params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim)
+params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=True)
 
 # synthetic gradient module for the last encoder layer
 params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
@@ -205,8 +207,8 @@ params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
 
 # decoder parameters
 params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
-params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200)
-params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28)
+params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200, batchnorm=True)
+params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
 
 # restore from saved weights
 if args.load is not None:
@@ -242,10 +244,10 @@ activation = T.matrix('sg_input_probs', dtype='float32')
 latent_gradients = T.matrix('sg_input_latgrads', dtype='float32')
 
 # encoding
-out1 = fflayer(tparams, img, _concat(ff_e, 'i'))
-out2 = fflayer(tparams, out1, _concat(ff_e,'h'))
+out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm='train')
+out2 = fflayer(tparams, out1, _concat(ff_e,'h'), batchnorm='train')
 
-latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid')
+latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
 latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 latent_probs_clipped = T.clip(latent_probs_r, 1e-7, 1-1e-7)
 
@@ -258,16 +260,16 @@ latent_samples = latent_probs_clipped + dummy
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
-outh = fflayer(tparams, outz, _concat(ff_d, 'h'))
-probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid')
+outh = fflayer(tparams, outz, _concat(ff_d, 'h'), batchnorm='train')
+probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm='train')
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # having large number of latent samples is necessary: multi-sample REINFORCE essentially gives the true gradients at the tradeoff of speed.
 reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 
 # separate parameters for encoder and decoder
-param_dec = [val for key, val in tparams.iteritems() if 'ff_dec' in key]
-param_enc = [val for key, val in tparams.iteritems() if 'ff_enc' in key]
+param_dec = [val for key, val in tparams.iteritems() if ('ff_dec' in key) and ('rm' not in key and 'rv' not in key)]
+param_enc = [val for key, val in tparams.iteritems() if ('ff_enc' in key) and ('rm' not in key and 'rv' not in key)]
 
 # decoder gradients
 cost_decoder = T.mean(reconstruction_loss)
