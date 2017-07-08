@@ -160,7 +160,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 
 def param_init_sgmod(params, prefix, units, zero_init=True):
 	'''
-	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
+	Initialization for synthetic gradient subnetwork
 	'''
 	global args
 	
@@ -189,7 +189,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 
 def synth_grad(tparams, prefix, inp, mode='Train'):
 	'''
-	Synthetic gradient estimation using a linear model
+	Synthetic gradients
 	'''
 	global args
 	if args.sg_type == 'lin':
@@ -198,6 +198,7 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None)
+		
 		if args.sg_type == 'deep':
 			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm='train', nonlin=None)
 		elif args.sg_type == 'lin_deep':
