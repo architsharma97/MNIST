@@ -268,9 +268,10 @@ if args.mode == 'train':
 	# pass a batch of indices while training
 	img_ids = T.vector('ids', dtype='int64')
 	img = train[img_ids,:]
-	gt_unrepeated = train_gt[img_ids,:]
-	
+	img_r = T.extra_ops.repeat(img, args.repeat, axis=0)
+
 	# repeat args.repeat-times to compensate for the sampling process
+	gt_unrepeated = train_gt[img_ids,:]
 	gt = T.extra_ops.repeat(gt_unrepeated, args.repeat, axis=0)
 
 	# inputs for synthetic gradient networks: needs the top half of the image batch
@@ -340,7 +341,7 @@ if args.mode == 'train':
 	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 	
 	# for better estimation, converts into a learnt straight through estimator with ST/REINFORCE
-	gradz = T.grad(cost_decoder, wrt=latent_samples).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+	gradz = T.grad(cost_decoder, wrt=latent_samples)
 	
 	print "Computing gradients wrt to encoder parameters"
 	# clipping for stability of gradients
@@ -350,11 +351,11 @@ if args.mode == 'train':
 		latent_probs_clipped = latent_probs
 	
 	known_grads = OrderedDict()
-	var_list = [img, gt_unrepeated, out3, gradz, latent_samples]
+	var_list = [img_r, gt, latent_probs, gradz, latent_samples]
 	sg_cond_vars_actual = []
 	for i in range(args.sg_inp):
 		sg_cond_vars_actual += [var_list[i]]
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
+	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -403,11 +404,11 @@ if args.mode == 'train':
 	# normalize target_gradients to have an upper bound on the norm
 	# target_gradients = T.switch((target_gradients ** 2).sum() / args.batch_size < 0.0001, target_gradients, (target_gradients * args.batch_size * 0.0001) / ((target_gradients ** 2).sum()) )
 	
-	var_list = [img, gt_unrepeated, activation, latent_gradients, samples]
+	var_list = [img_r, gt, activation, latent_gradients, samples]
 	sg_cond_vars_symbol = []
 	for i in range(args.sg_inp):
 		sg_cond_vars_symbol += [var_list[i]]
-	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))) ** 2)
+	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 
 	# ----------------------------------------------General training routine------------------------------------------------------
@@ -430,7 +431,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, out3, gradz, latent_samples])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples])
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
 	
 	print "Training"
