@@ -254,7 +254,7 @@ params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100, batchnorm=True
 if args.bn_type == 0:
 	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=True)
 else:
-	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=None)
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=False)
 
 # synthetic gradient module for the last encoder layer
 params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
@@ -270,7 +270,7 @@ params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200, batchnorm=True
 if args.bn_type == 0 :
 	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
 else:
-	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=None)
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=False)
 
 # restore from saved weights
 if args.load is not None:

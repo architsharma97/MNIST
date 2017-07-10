@@ -29,6 +29,8 @@ parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of t
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
 parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
+parser.add_argument('-z', '--bn_type', type=int, default=0,
+					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
 
 # termination of training
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
@@ -69,6 +71,7 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	'''
 	Initializes weights for a feedforward layer
 	'''
+	global args
 	if zero_init:
 		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
 	else:
@@ -77,10 +80,14 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
 	
 	if batchnorm:
-		params[_concat(prefix, 'g')] = np.ones((nin,), dtype=np.float32)
-		params[_concat(prefix, 'be')] = np.zeros((nin,)).astype('float32')
-		params[_concat(prefix, 'rm')] = np.zeros((1, nin)).astype('float32')
-		params[_concat(prefix, 'rv')] = np.ones((1, nin), dtype=np.float32)
+		if args.bn_type == 0:
+			dim = nin
+		else:
+			dim = nout
+		params[_concat(prefix, 'g')] = np.ones((dim,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((dim,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
 	
 	return params
 
@@ -93,7 +100,10 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	global srng, args
 
 	# apply batchnormalization on the input
-	inp = state_below
+	if args.bn_type == 0:
+		inp = state_below
+	else:
+		inp = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 
 	if batchnorm == 'train':
 		axes = (0,)
@@ -110,7 +120,10 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	elif batchnorm == 'test':
 		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
 	
-	preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	if args.bn_type == 0:
+		preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	else:
+		preact = inp
 
 	# dropout is carried out with fixed probability
 	if dropout == 'train':
@@ -133,11 +146,16 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 
 def param_init_sgmod(params, prefix, units, zero_init=True):
 	'''
-	Initializes a linear regression based model for estimating gradients, conditioned on the class labels
+	Initialization for synthetic gradient subnetwork
 	'''
 	global args
+	
 	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
-	inp_size = 28*28 + units + units + units
+	inp_list = [14*28, 14*28, units, units, units]
+	inp_size = 0
+	for i in range(5):
+		inp_size += inp_list[i]
+
 	if not zero_init:
 		if args.sg_type == 'lin':
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
@@ -151,13 +169,16 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
-			params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True)
+			if args.bn_type == 0:
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True)
+			else:
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
 
 	return params
 
 def synth_grad(tparams, prefix, inp, mode='Train'):
 	'''
-	Synthetic gradient estimation using a linear model
+	Synthetic gradients
 	'''
 	global args
 	if args.sg_type == 'lin':
@@ -166,10 +187,17 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None)
+		
+		# depending on the bn type being used, bn is used/not used in the layer
+		if args.bn_type == 0:
+			bn_last = 'train'
+		else:
+			bn_last = None
+		
 		if args.sg_type == 'deep':
-			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), bathnorm ='train', nonlin=None)
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm='train', nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
@@ -197,7 +225,11 @@ params = OrderedDict()
 params = param_init_fflayer(params, _concat(ff_e, 'i'), 14*28, 200, batchnorm=True)
 params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100, batchnorm=True)
 
-params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=True)
+# latent
+if args.bn_type == 0:
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=True)
+else:
+	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=False)
 
 # synthetic gradient module for the last encoder layer
 params = param_init_sgmod(params, _concat(sg, 'r'), latent_dim)
@@ -208,7 +240,10 @@ params = param_init_fflayer(params, 'loss_pred', 28*28, 1)
 # decoder parameters
 params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
 params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200, batchnorm=True)
-params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
+if args.bn_type == 0 :
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
+else:
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=False)
 
 # restore from saved weights
 if args.load is not None:
@@ -248,7 +283,10 @@ samples = T.matrix('sg_input_samples', dtype='float32')
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm='train')
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'), batchnorm='train')
 
-latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
+if args.bn_type == 0:
+	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
+else:
+	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 latent_probs_clipped = T.clip(latent_probs_r, 1e-7, 1-1e-7)
 
@@ -262,7 +300,10 @@ latent_samples = latent_probs_clipped + dummy
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
 outh = fflayer(tparams, outz, _concat(ff_d, 'h'), batchnorm='train')
-probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm='train')
+if args.bn_type == 0:
+	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm='train')
+else:
+	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # having large number of latent samples is necessary: multi-sample REINFORCE essentially gives the true gradients at the tradeoff of speed.

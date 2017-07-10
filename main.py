@@ -27,6 +27,8 @@ parser.add_argument('-e','--estimator', type=str, default='SF',
 					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF), Path Derivative (PD) or Straight Through (ST) with discrete.')
 parser.add_argument('-o', '--latent_type', type=str, default='disc', 
 					help='Either discrete bernoulli (disc) or continous gaussian (cont)')
+parser.add_argument('-z', '--bn_type', type=int, default=0,
+					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
 
 # using REINFORCE or ST
 parser.add_argument('-r', '--repeat', type=int, default=1, 
@@ -101,6 +103,7 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	'''
 	Initializes weights for a feedforward layer
 	'''
+	global args
 	if zero_init:
 		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
 	else:
@@ -109,10 +112,14 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
 	
 	if batchnorm:
-		params[_concat(prefix, 'g')] = np.ones((nin,), dtype=np.float32)
-		params[_concat(prefix, 'be')] = np.zeros((nin,)).astype('float32')
-		params[_concat(prefix, 'rm')] = np.zeros((1, nin)).astype('float32')
-		params[_concat(prefix, 'rv')] = np.ones((1, nin), dtype=np.float32)
+		if args.bn_type == 0:
+			dim = nin
+		else:
+			dim = nout
+		params[_concat(prefix, 'g')] = np.ones((dim,), dtype=np.float32)
+		params[_concat(prefix, 'be')] = np.zeros((dim,)).astype('float32')
+		params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
+		params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
 	
 	return params
 
@@ -125,7 +132,10 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	global srng, args
 
 	# apply batchnormalization on the input
-	inp = state_below
+	if args.bn_type == 0:
+		inp = state_below
+	else:
+		inp = T.dot(state_below, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 
 	if batchnorm == 'train':
 		axes = (0,)
@@ -138,11 +148,14 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 		m = T.cast(T.prod(inp.shape) / T.prod(mean.shape), 'float32')
 		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
 		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
-	
+		
 	elif batchnorm == 'test':
 		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
 	
-	preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	if args.bn_type == 0:
+		preact = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+	else:
+		preact = inp
 
 	# dropout is carried out with fixed probability
 	if dropout == 'train':
@@ -193,7 +206,10 @@ if args.latent_type == 'cont':
 	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim, batchnorm=True)
 
 elif args.latent_type == 'disc':
-	params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim,batchnorm=True)
+	if args.bn_type == 0:
+		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=True)
+	else:
+		params = param_init_fflayer(params, _concat(ff_e, 'bern'), 100, latent_dim, batchnorm=False)
 	
 	if args.estimator == 'SF' and args.var_red == 'cmr':
 		# loss prediction neural network, conditioned on input and output (in this case the whole image). Acts as the baseline
@@ -202,7 +218,10 @@ elif args.latent_type == 'disc':
 # decoder parameters
 params = param_init_fflayer(params, _concat(ff_d, 'n'), latent_dim, 100)
 params = param_init_fflayer(params, _concat(ff_d, 'h'), 100, 200, batchnorm=True)
-params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
+if args.bn_type == 0 :
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=True)
+else:
+	params = param_init_fflayer(params, _concat(ff_d, 'o'), 200, 14*28, batchnorm=False)
 
 if args.load is not None:
 	# restore from saved weights
@@ -263,8 +282,10 @@ if args.latent_type == 'cont':
 	latent_samples = mu + sd * eps
 
 elif args.latent_type == 'disc':
-	
-	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=args.mode)
+	if args.bn_type == 0:
+		latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=args.mode)
+	else:
+		latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 
 	if args.estimator == 'SF':
 		latent_probs = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
@@ -305,7 +326,10 @@ elif args.latent_type == 'disc':
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
 outh = fflayer(tparams, outz, _concat(ff_d, 'h'), batchnorm=args.mode)
-probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm=args.mode)
+if args.bn_type == 0:
+	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm=args.mode)
+else:
+	probs = fflayer(tparams, outh, _concat(ff_d, 'o'), nonlin='sigmoid', batchnorm=None)
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Training
