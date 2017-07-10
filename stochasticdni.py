@@ -117,7 +117,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	Note: None means dropout/batch normalization is not used.
 	Use 'train' or 'test' options.
 	'''
-	global srng, args, rvparams, rvfunctions
+	global srng, args
 
 	# apply batchnormalization on the input
 	inp = state_below

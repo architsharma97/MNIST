@@ -90,7 +90,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 	Note: None means dropout/batch normalization is not used.
 	Use 'train' or 'test' options.
 	'''
-	global srng, args, rvparams, rvfunctions
+	global srng, args
 
 	# apply batchnormalization on the input
 	inp = state_below
@@ -283,9 +283,9 @@ consider_constant = [reconstruction_loss, latent_samples, baseline]
 grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r] + [latent_probs], consider_constant=consider_constant)
 
 # true gradient is scaled up 100 times example wise and 1-sample reinforce is scaled up by 250*100 to account for the "mean" costs
-true_gradient = args.batch_size * grads_encoder[-1]
-true_gradient_norm = (true_gradient ** 2).sum() / args.batch_size
-reinforce_1 = args.batch_size * args.repeat * grads_encoder[-2]
+true_gradient = grads_encoder[-1] # * args.batch_size
+true_gradient_norm = (true_gradient ** 2).sum() # / args.batch_size
+reinforce_1 = args.repeat * grads_encoder[-2] # * args.batch_size
 grads_encoder = grads_encoder[:-2]
 
 # optimizing the loss predictor for conditional mean baseline
@@ -299,29 +299,30 @@ grads = grads_encoder + grads_plp + grads_decoder
 temp = T.extra_ops.repeat(true_gradient, args.repeat, axis=0)
 
 # bias-variance of 1-sample reinforce: expected value for the gradient is the true gradient itself: bias should approximately be zero
-bias2_reinforce = ((reinforce_1.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat - true_gradient) ** 2).sum() / args.batch_size
-var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat * args.batch_size)
+bias2_reinforce = ((reinforce_1.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat - true_gradient) ** 2).sum() # / args.batch_size
+var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat) # * args.batch_size)
 r_samedir = T.cast((reinforce_1 * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # bias-variance decomposition of straight through estimator
-st = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy])
+st = args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy]) # * args.batch_size 
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-ez_st_norm = (ez_st ** 2).sum() / args.batch_size
-bias2_st = ((ez_st - true_gradient) ** 2).sum() / args.batch_size
-var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat * args.batch_size)
+ez_st_norm = (ez_st ** 2).sum() # / args.batch_size
+bias2_st = ((ez_st - true_gradient) ** 2).sum() # / args.batch_size
+var_st = ((st - T.extra_ops.repeat(ez_st, args.repeat, axis=0)) ** 2).sum() / (args.repeat) # * args.batch_size)
 st_samedir = T.cast((st * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # bias-variance decomposition of synthetic gradients
 param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' not in key and 'rv' not in key)]
-gradz = args.batch_size * args.repeat * T.grad(cost_decoder, wrt=latent_samples)
+gradz = args.repeat * T.grad(cost_decoder, wrt=latent_samples) # * args.batch_size
 
+# the multiplications by repeat/batch_size are not carried out because synthetic gradients would produce the same gradients even if one sample/example was given.
 var_list = [img_r, gt, latent_probs_clipped, gradz, latent_samples]
 sg_r = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(var_list, axis=1), mode='test')
 ez_sg = sg_r.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-ez_sg_norm = (ez_sg ** 2).sum() / args.batch_size
+ez_sg_norm = (ez_sg ** 2).sum() # / args.batch_size
 
-bias2_sg = ((ez_sg - true_gradient) ** 2).sum() / args.batch_size
-var_sg = ((sg_r - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.batch_size * args.repeat)
+bias2_sg = ((ez_sg - true_gradient) ** 2).sum() # / args.batch_size
+var_sg = ((sg_r - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.repeat) # * args.batch_size)
 sg_samedir = T.cast((ez_sg * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
 
 # optimizing the synthetic gradient subnetwork
@@ -334,7 +335,8 @@ grads_sg = T.grad(loss_sg, wrt=param_sg)
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-outs = [cost_decoder, true_gradient / args.batch_size, latent_probs_clipped, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
+'''Do not forget to divide by batch size, when you return from this pretense'''
+outs = [cost_decoder, true_gradient, latent_probs_clipped, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [target_gradients, activation, latent_gradients, samples]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -382,7 +384,7 @@ while condition == False:
 		f_update_sg(args.learning_rate)
 		
 		epoch_cost += cost
-		# epoch, batch id, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, straight-through squared norm, bias-straight through, variance-straight through, reinforce half-space correlation, synthetic gradient squared norm, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
+		# epoch, batch id, main networks cost, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, straight-through squared norm, bias-straight through, variance-straight through, reinforce half-space correlation, synthetic gradient squared norm, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
 		cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost)  + ',' + str(tgn) + ',' + str(br) + ',' + str(vr) + ',' + str(sr) + ',' + str(sn) + ',' + str(bs) + ',' + str(vs) + ',' + str(ss) + ',' + str(sgn) + ',' + str(bsg) + ',' + str(vsg) + ',' + str(ssg) + ',' + str(time.time() - batch_start) + '\n')
 
 	print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
