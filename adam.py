@@ -10,7 +10,7 @@ def adam(lr, tparams, grads, inp, cost):
 	gshared = [theano.shared(p.get_value() * 0., name='%s_grad'%k) for k, p in tparams.iteritems()]
 	gsup = [(gs, g) for gs, g in zip(gshared, grads)]
 
-	f_grad_shared = theano.function(inp, cost, updates=gsup, profile=False)
+	f_grad_shared = theano.function(inp, cost, updates=gsup, on_unused_input='ignore', profile=False)
 
 	lr0 = 0.0002
 	b1 = 0.1
