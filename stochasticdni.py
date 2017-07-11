@@ -154,7 +154,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 
 	# dropout is carried out with fixed probability
 	if dropout == 'train':
-		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
+		dropmask = srng.binomial(n=1, p=1.-args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
 		preact *= dropmask
 	
 	elif dropout == 'test':
@@ -203,10 +203,14 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
 
 		if args.sg_type == 'custom':
-			# a linear and tanh units combined
+			# residual block
 			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
-			params = param_init_fflayer(params, _concat(prefix, 't'), inp_size, units, zero_init=True)
+			params[_concat(prefix, 'g')] = np.ones((units,), dtype=np.float32)
+			params[_concat(prefix, 'be')] = np.zeros((units,)).astype('float32')
+
+			params = param_init_fflayer(params, _concat(prefix, '1'), units, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, '2'), 1024, units, zero_init=True)
 
 	return params
 
@@ -234,7 +238,18 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None)
 	
 	elif args.sg_type == 'custom':
-		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, inp, _concat(prefix, 't'), nonlin='tanh')
+		# channel 2 which forms the skip connection
+		inp = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+		
+		# channel 1
+		mean = inp.mean((0,), keepdims=True)
+		var = inp.var((0,), keepdims=True)
+		invstd = T.inv(T.sqrt(var + 1e-4))
+		out1 = T.nnet.nnet.relu((inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')])
+		out2 = fflayer(tparams, out1, _concat(prefix, '1'), nonlin='relu', batchnorm='train')
+
+		# channel 1 + channel 2
+		return fflayer(tparams, out2, _concat(prefix, '2'), nonlin=None) + inp
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 print "Creating partial images"
