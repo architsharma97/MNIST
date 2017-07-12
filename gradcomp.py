@@ -29,7 +29,7 @@ parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of t
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
 parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
-parser.add_argument('-z', '--bn_type', type=int, default=0,
+parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
 
 # termination of training

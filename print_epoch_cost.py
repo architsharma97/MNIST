@@ -10,5 +10,5 @@ else:
 for i in range(r):
 	sum = 0.0
 	for j in range(600):
-		sum += float(f[i*600 + j].split(',')[2])
+		sum += float(f[i*600 + j].split(',')[3])
 	print "Epoch " + str(i+1) + ":", sum

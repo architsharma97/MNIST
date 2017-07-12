@@ -467,7 +467,7 @@ if args.mode == 'train':
 	sg_cond_vars_symbol = [var_list[i] for i in range(5) if args.sg_inp[i] == '1']
 	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
-
+	tgnorm = (target_gradients ** 2).sum() / args.batch_size
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
 	lr = T.scalar('lr', dtype='float32')
@@ -489,7 +489,7 @@ if args.mode == 'train':
 
 	print "Setting up optimizers"
 	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples])
-	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
+	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
 	
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -500,6 +500,17 @@ if args.mode == 'train':
 	epoch = 0
 	condition = False
 	
+	# reinitialization scheme for channel 1 of subnetwork
+	# gam = T.vector('rg', dtype='float32')
+	# bet = T.vector('rb', dtype='float32')
+	# w1 = T.matrix('rw1', dtype='float32')
+	# w2 = T.matrix('rw2', dtype='float32')
+	# b1 = T.vector('rb1', dtype='float32')
+	# b2 = T.vector('rb2', dtype='float32')
+
+	# reinit_dict = [(tparams['sg_r_g'], gam), (tparams['sg_r_be'], bet), (tparams['sg_r_1_W'], w1), (tparams['sg_r_2_W'], w2), (tparams['sg_r_1_b'], b1), (tparams['sg_r_2_b'], b2)]
+	# reinit = theano.function([gam, bet, w1, w2, b1, b2], None, updates=reinit_dict)
+
 	while condition == False:
 		print "Epoch " + str(epoch + 1),
 
@@ -522,7 +533,7 @@ if args.mode == 'train':
 			# subnetwork update
 			cost_sg = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).sum()):
-				cost_sg = f_grad_shared_sg(idlist, *outs[1:])
+				cost_sg, tmag = f_grad_shared_sg(idlist, *outs[1:])
 				f_update_sg(args.learning_rate)
 
 				epoch_cost_sg += cost_sg
@@ -545,8 +556,25 @@ if args.mode == 'train':
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(tmag) + ',' + str(time.time() - batch_start) + '\n')
 
+			# partial REINITIALIZATION of the subnetwork to get it out of the local minima
+			# if iters == 1:
+			# 	smooth_sg_cost = cost_sg
+			# 	flag = False
+			# else:
+			# 	smooth_sg_cost = 0.99 * smooth_sg_cost + 0.01 * cost_sg
+
+			# if (smooth_sg_cost >= 0.4 and flag == True):
+			# 	print "Reinitializing the channel 1 for subnetwork"
+			# 	params = param_init_fflayer(params, _concat('sg_r', '1'), latent_dim, 1024, batchnorm=True)
+			# 	params = param_init_fflayer(params, _concat('sg_r', '2'), 1024, latent_dim, zero_init=True)
+			# 	reinit(params['sg_r_g'], params['sg_r_be'], params['sg_r_1_W'], params['sg_r_2_W'], params['sg_r_1_b'], params['sg_r_2_b'])
+			# 	flag = False
+			# elif smooth_sg_cost <=0.4 and flag == False:
+			# 	print "Entered in susceptible zone"
+			# 	flag = True
+		
 		print ": Cost " + str(epoch_cost) + " : SG Cost " + str(epoch_cost_sg) + " : Time " + str(time.time() - epoch_start)
 		
 		# save every args.save_freq epochs

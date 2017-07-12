@@ -1,5 +1,5 @@
 """
-Adam optimizer picked up Ryan Kiros' implementation for skip-thoughts
+Adam optimizer picked up from Ryan Kiros' implementation for skip-thoughts
 """
 import theano
 import theano.tensor as tensor
