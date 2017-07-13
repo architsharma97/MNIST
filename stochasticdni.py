@@ -30,7 +30,8 @@ parser.add_argument('-y', '--sg_inp', type=str, default='11111',
 					help='Customize input to synthetic subnetworks: Construct a string of 0,1 with 1 at inputs to be conditioned on')
 parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
-
+parser.add_argument('-w', '--max_grad', type=float, default=5.0,
+					help='Maximum elementwise mean squared norm of the target signal, otherwise gradient is clipped')
 # update frequencies
 parser.add_argument('-q', '--main_update_freq', type=int, default=1,
 					help='Number of iterations after which the main network is updated')
@@ -461,13 +462,13 @@ if args.mode == 'train':
 		weights_sum_sg += (val**2).sum()
 
 	# normalize target_gradients to have an upper bound on the norm
-	# target_gradients = T.switch((target_gradients ** 2).sum() / args.batch_size < 0.0001, target_gradients, (target_gradients * args.batch_size * 0.0001) / ((target_gradients ** 2).sum()) )
+	target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < 5.0, target_gradients, target_gradients * 5.0 / T.mean(target_gradients ** 2))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples]
 	sg_cond_vars_symbol = [var_list[i] for i in range(5) if args.sg_inp[i] == '1']
-	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
+	loss_sg = T.mean((target_gradients_clip - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
-	tgnorm = (target_gradients ** 2).sum() / args.batch_size
+	tgnorm = T.mean(target_gradients_clip ** 2)
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
 	lr = T.scalar('lr', dtype='float32')

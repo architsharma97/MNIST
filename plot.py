@@ -12,26 +12,24 @@ def smooth(vals):
 # plt.ylim(60, 100)
 
 legend_entries = []
-plt.title('Half-Space Correlation')
-for k in [250]:
-	idx = 6
-	f = open('Results/disc/SF/gradcomp_pretense_' + str(k) + '_100_0.0001.txt','r').read().splitlines()[:-1]
-	vals = [float(line.split(',')[idx]) for line in f]
+for k in [1]:
+	f = open('Results/disc/SF/training_test_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	vals = [float(line.split(',')[3]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::600])
-	legend_entries += ['1-REINFORCE']
+	legend_entries += ['Average squared norm of 1-REINFORCE']
 
-	# f = open('Results/disc/SF/gradcomp_pretense_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
-	vals = [float(line.split(',')[idx + 4]) for line in f]
-	smoothened = smooth(vals) 
-	plt.plot(smoothened[::600])
-	legend_entries += ['Straight Through']
+	# # f = open('Results/disc/SF/gradcomp_pretense_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	# vals = [float(line.split(',')[idx + 4]) for line in f]
+	# smoothened = smooth(vals) 
+	# plt.plot(smoothened[::600])
+	# legend_entries += ['Straight Through']
 
-	# f = open('Results/disc/SF/gradcomp_pretense_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
-	vals = [float(line.split(',')[idx + 8]) for line in f]
-	smoothened = smooth(vals) 
-	plt.plot(smoothened[::600])
-	legend_entries += ['Synthetic Gradient']
+	# # f = open('Results/disc/SF/gradcomp_pretense_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	# vals = [float(line.split(',')[idx + 8]) for line in f]
+	# smoothened = smooth(vals) 
+	# plt.plot(smoothened[::600])
+	# legend_entries += ['Synthetic Gradient']
 	
 plt.grid()
 plt.legend(legend_entries)

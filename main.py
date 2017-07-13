@@ -27,7 +27,7 @@ parser.add_argument('-e','--estimator', type=str, default='SF',
 					help='Type of estimator to be used for the stochastic node. Choose REINFORCE (SF), Path Derivative (PD) or Straight Through (ST) with discrete.')
 parser.add_argument('-o', '--latent_type', type=str, default='disc', 
 					help='Either discrete bernoulli (disc) or continous gaussian (cont)')
-parser.add_argument('-z', '--bn_type', type=int, default=0,
+parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
 
 # using REINFORCE or ST
@@ -202,8 +202,12 @@ params = param_init_fflayer(params, _concat(ff_e, 'h'), 200, 100, batchnorm=True
 
 # latent distribution parameters
 if args.latent_type == 'cont':
-	params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim, batchnorm=True)
-	params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim, batchnorm=True)
+	if args.bn_type == 0:
+		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim, batchnorm=True)
+		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim, batchnorm=True)
+	else:
+		params = param_init_fflayer(params, _concat(ff_e, 'mu'), 100, latent_dim, batchnorm=False)
+		params = param_init_fflayer(params, _concat(ff_e, 'sd'), 100, latent_dim, batchnorm=False)
 
 elif args.latent_type == 'disc':
 	if args.bn_type == 0:
@@ -288,10 +292,10 @@ elif args.latent_type == 'disc':
 		latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 
 	if args.estimator == 'SF':
-		latent_probs = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
+		latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 
 		# sample a bernoulli distribution, which a binomial of 1 iteration
-		latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
+		latent_samples = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
 	
 	elif args.estimator == 'PD':
 		# sample a gumbel-softmax distribution
@@ -348,7 +352,9 @@ if args.mode == 'train':
 			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
 		
 		elif args.latent_type == 'cont':
-			grads = T.grad(cost, wrt=param_list)
+			grads = T.grad(cost, wrt=param_list + [mu])
+			xtranorm = T.mean(grads[-1] ** 2)
+			grads = grads[:-1]
 
 	if args.estimator == 'SF':
 		print "Computing gradient estimators using REINFORCE"
@@ -407,8 +413,10 @@ if args.mode == 'train':
 			weights_sum_enc += (val**2).sum()
 		cost_encoder += args.regularization * weights_sum_enc
 
-		grads_encoder = T.grad(cost_encoder, wrt=param_enc, consider_constant=consider_constant)
-
+		grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs], consider_constant=consider_constant)
+		xtranorm = T.mean(grads_encoder[-1] ** 2)
+		grads_encoder = grads_encoder[:-1]
+		
 		# combine grads in this order only
 		if args.estimator == 'SF' and args.var_red == 'cmr':
 			grads = grads_encoder + grads_plp + grads_decoder
@@ -448,7 +456,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 	
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, cost)
+	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, [cost, xtranorm])
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -478,13 +486,13 @@ if args.mode == 'train':
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:
 				# fprint(idlist)
-				cost = f_grad_shared(idlist)	
+				cost, xtra = f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
 
 			f_update(args.learning_rate)
 
 			epoch_cost += cost
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(xtra) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		
