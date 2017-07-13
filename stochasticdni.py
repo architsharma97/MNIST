@@ -462,7 +462,7 @@ if args.mode == 'train':
 		weights_sum_sg += (val**2).sum()
 
 	# normalize target_gradients to have an upper bound on the norm
-	target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < 5.0, target_gradients, target_gradients * 5.0 / T.mean(target_gradients ** 2))
+	target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * args.max_grad / T.mean(target_gradients ** 2))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples]
 	sg_cond_vars_symbol = [var_list[i] for i in range(5) if args.sg_inp[i] == '1']
