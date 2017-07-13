@@ -456,7 +456,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 	
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, [cost, xtranorm])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, cost)
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -486,13 +486,13 @@ if args.mode == 'train':
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:
 				# fprint(idlist)
-				cost, xtra = f_grad_shared(idlist)	
+				cost = f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
 
 			f_update(args.learning_rate)
 
 			epoch_cost += cost
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(xtra) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		
