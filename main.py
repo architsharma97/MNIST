@@ -292,8 +292,9 @@ elif args.latent_type == 'disc':
 		latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 
 	if args.estimator == 'SF':
-		latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
-
+		# clipped for stability of gradients
+		latent_probs_r = T.clip(T.extra_ops.repeat(latent_probs, args.repeat, axis=0), 1e-7, 1-1e-7)
+				
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
 	
@@ -381,22 +382,20 @@ if args.mode == 'train':
 			cost_encoder = T.mean(reconstruction_loss * (-0.5 * T.log(abs(sd) + delta).sum(axis=1) - 0.5 * (((latent_samples - mu)/(sd + delta)) ** 2).sum(axis=1)))
 			
 		elif args.latent_type =='disc':
-			# for stability of gradients
-			latent_probs_clipped = T.clip(latent_probs, 1e-7, 1-1e-7)
 			# arguments to be considered constant when computing gradients
 			consider_constant = [reconstruction_loss, latent_samples]
 
 			if args.var_red is None:
-				cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
 			
 			elif args.var_red == 'mr':
 				# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
-				cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
 			
 			elif args.var_red == 'cmr':
 				# conditional mean is subtracted from the reconstruction loss to lower variance further
 				baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
 
 				# optimizing the predictor
 				cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
