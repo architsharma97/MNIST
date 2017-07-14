@@ -34,7 +34,7 @@ parser.add_argument('-z', '--bn_type', type=int, default=1,
 parser.add_argument('-r', '--repeat', type=int, default=1, 
 					help='Determines the number of samples per training example for SF estimator, not to be provided with PD estimator')
 # using REINFORCE
-parser.add_argument('-v', '--var_red', type=str, default=None,
+parser.add_argument('-v', '--var_red', type=str, default='cmr',
 					help='Use different control variates, unconditional mean (mr) and conditional mean (cmr)')
 
 # gumbel-softmax configuration which is used for PD estimators with discrete latent variables
@@ -387,7 +387,7 @@ if args.mode == 'train':
 
 			if args.var_red is None:
 				cost_encoder = T.mean(reconstruction_loss * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
-			
+				
 			elif args.var_red == 'mr':
 				# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
 				cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
@@ -395,10 +395,10 @@ if args.mode == 'train':
 			elif args.var_red == 'cmr':
 				# conditional mean is subtracted from the reconstruction loss to lower variance further
 				baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
+				cost_encoder = T.mean(-(T.exp(-reconstruction_loss/100) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
 
 				# optimizing the predictor
-				cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
+				cost_pred = 0.5 * ((T.exp(-reconstruction_loss/100) - baseline.T) ** 2).sum()
 				
 				params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 				print "Loss predictor parameters:", params_loss_predictor
@@ -455,7 +455,7 @@ if args.mode == 'train':
 			tparams_net[key] = val
 	
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, cost)
+	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, [cost, xtranorm])
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -485,13 +485,13 @@ if args.mode == 'train':
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:
 				# fprint(idlist)
-				cost = f_grad_shared(idlist)	
+				cost, xtra = f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
 
 			f_update(args.learning_rate)
 
 			epoch_cost += cost
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(xtra) + ',' + str(time.time() - batch_start) + '\n')
 
 		print ": Cost " + str(epoch_cost) + " : Time " + str(time.time() - epoch_start)
 		
