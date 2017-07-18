@@ -19,10 +19,10 @@ for k in [1]:
 	plt.plot(smoothened[::600])
 	legend_entries += ['(Linear Subnetworks): Subnetwork Cost']
 
-	vals = [float(line.split(',')[4]) for line in f]
-	smoothened = smooth(vals) 
-	plt.plot(smoothened[::600])
-	legend_entries += ['(Linear Subnetworks): Target Norms']
+	# vals = [float(line.split(',')[4]) for line in f]
+	# smoothened = smooth(vals) 
+	# plt.plot(smoothened[::600])
+	# legend_entries += ['(Linear Subnetworks): Target Norms']
 
 	# f = open('Results/disc/SF/training_sf_cmr_pbn_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	# vals = [float(line.split(',')[2]) for line in f]
