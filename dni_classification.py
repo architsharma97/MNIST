@@ -299,5 +299,5 @@ else:
 	acc = T.mean(T.eq(pred, lbl)) * 100
 	f = theano.function([img_ids], acc)
 
-	# print accuracy over training data
+	# print accuracy over test data
 	print f(range(len(tei)))

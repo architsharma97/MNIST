@@ -13,11 +13,16 @@ def smooth(vals):
 
 legend_entries = []
 for k in [1]:
-	f = open('Results/disc/SF/training_test_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
+	f = open('training_test_lin_1_gc5.0_100_0.0001.txt', 'r').read().splitlines()
 	vals = [float(line.split(',')[3]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::600])
-	legend_entries += [str(k) + '-REINFORCE']
+	legend_entries += ['(Linear Subnetworks): Subnetwork Cost']
+
+	# vals = [float(line.split(',')[4]) for line in f]
+	# smoothened = smooth(vals) 
+	# plt.plot(smoothened[::600])
+	# legend_entries += ['(Linear Subnetworks): Target Norms']
 
 	# f = open('Results/disc/SF/training_sf_cmr_pbn_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	# vals = [float(line.split(',')[2]) for line in f]
@@ -29,7 +34,7 @@ for k in [1]:
 	# vals = [float(line.split(',')[2]) for line in f]
 	# smoothened = smooth(vals) 
 	# plt.plot(smoothened[::600])
-	# legend_entries += ['Linear subnetwork: No gradient clipping']
+	# legend_entries += ['Linear subnetwork: No gradient clipping with ' + str(k) + '-REINFORCE training']
 
 	# f = open('Results/disc/synthetic_gradients/training_sg_inp_act_out_grads_ld_cmr_bn_' + str(k) + '_100_0.0001.txt','r').read().splitlines()
 	# vals = [float(line.split(',')[2]) for line in f]
@@ -41,7 +46,7 @@ for k in [1]:
 	# vals = [float(line.split(',')[2]) for line in f]
 	# smoothened = smooth(vals) 
 	# plt.plot(smoothened[::600])
-	# legend_entries += ['Linear subnetwork: Gradient clipped <= 1.0 elementwise norm']
+	# legend_entries += ['Linear subnetwork: Gradient clipped <= 1.0 elementwise norm with ' + str(k) + '-REINFORCE training']
 	
 
 	# f = open('Results/disc/synthetic_gradients/training_sg_inp_act_out_grads_samp_lin_cmr_pbn_' + str(k) + '_gc2.0_100_0.0001.txt','r').read().splitlines()
@@ -80,6 +85,7 @@ for k in [1]:
 	# smoothened = smooth(vals) 
 	# plt.plot(smoothened[::600])
 	# legend_entries += ['Deep subnetwork with z conditioning: Gradient clipped <= 1.0 elementwise norm']
+
 plt.grid()
 plt.legend(legend_entries)
 
