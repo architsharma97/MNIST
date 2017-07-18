@@ -509,7 +509,7 @@ if args.mode == 'train':
 	epoch = 0
 	condition = False
 	
-	# reinitialization scheme for channel 1 of subnetwork
+	# reinitialization scheme for channel 1 of custom subnetwork
 	# gam = T.vector('rg', dtype='float32')
 	# bet = T.vector('rb', dtype='float32')
 	# w1 = T.matrix('rw1', dtype='float32')
