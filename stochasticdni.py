@@ -5,8 +5,10 @@ from read_mnist import read, show
 import theano
 import theano.tensor as T
 from utils import init_weights, _concat
-from adam import adam
 import argparse
+
+from adam import adam
+from sgd import SGD
 
 from collections import OrderedDict
 import time
@@ -442,7 +444,7 @@ if args.mode == 'train':
 			cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 			# optimizing the predictor
-			cost_pred = 0.5 * ((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2).sum()
+			cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
 			
 			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 			print "Loss predictor parameters:", params_loss_predictor
@@ -492,7 +494,11 @@ if args.mode == 'train':
 
 	print "Setting up optimizers"
 	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples])
-	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
+	# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
+
+	# sgd with momentum updates
+	sgd = SGD(lr=args.learning_rate)
+	f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 	
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -536,8 +542,8 @@ if args.mode == 'train':
 			# subnetwork update
 			cost_sg = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).sum()):
-				cost_sg, tmag = f_grad_shared_sg(idlist, *outs[1:])
-				f_update_sg(args.learning_rate)
+				cost_sg, tmag = f_update_sg(idlist, *outs[1:])
+				# f_update_sg(args.learning_rate)
 
 				epoch_cost_sg += cost_sg
 			
@@ -557,6 +563,7 @@ if args.mode == 'train':
 				 elif iters == 30000:
 			 		args.sub_update_freq = 100
 			
+			# print tparams['sg_r_b'].get_value()
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
 			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(tmag) + ',' + str(time.time() - batch_start) + '\n')
