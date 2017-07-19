@@ -287,8 +287,7 @@ if args.bn_type == 0:
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
 else:
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
-latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
-latent_probs_clipped = T.clip(latent_probs_r, 1e-7, 1-1e-7)
+latent_probs_clipped = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 
 # sample a bernoulli distribution, which a binomial of 1 iteration
 latent_samples_uncorrected = srng.binomial(size=latent_probs_clipped.shape, n=1, p=latent_probs_clipped, dtype=theano.config.floatX)
