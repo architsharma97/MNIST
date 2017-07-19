@@ -307,7 +307,7 @@ else:
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # having large number of latent samples is necessary: multi-sample REINFORCE essentially gives the true gradients at the tradeoff of speed.
-reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
+reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).mean(axis=1)
 
 # separate parameters for encoder and decoder
 param_dec = [val for key, val in tparams.iteritems() if ('ff_dec' in key) and ('rm' not in key and 'rv' not in key)]
