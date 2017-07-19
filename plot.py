@@ -13,7 +13,7 @@ def smooth(vals):
 
 legend_entries = []
 for k in [1]:
-	f = open('training_test_linsgd_1_gc5.0_100_0.0001.txt', 'r').read().splitlines()
+	f = open('training_test_ldsgd_noexp_1_gc5.0_100_0.0001.txt', 'r').read().splitlines()
 	vals = [float(line.split(',')[3]) for line in f]
 	smoothened = smooth(vals) 
 	plt.plot(smoothened[::600])

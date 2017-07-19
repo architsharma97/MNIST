@@ -43,6 +43,8 @@ parser.add_argument('-i', '--sub_update_freq', type=int, default=1,
 # REINFORCE only meta-parameters
 parser.add_argument('-v', '--var_red', type=str, default='cmr',
 					help='Use different control variates for targets, unconditional mean (mr) and conditional mean (cmr)')
+parser.add_argument('-aa', '--use_exp_reward', type=int, default=0,
+					help='Use a exponential reward, which allows for smaller gradients to be learnt (1 if yes, 0 otherwise)')
 parser.add_argument('-d', '--exptemp', type=float, default=100.0,
 					help='Rewards are exponentiated: This controls the temperature.')
 
@@ -441,11 +443,14 @@ if args.mode == 'train':
 		elif args.var_red == 'cmr':
 			# conditional mean is subtracted from the reconstruction loss to lower variance further
 			baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-			cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
-
-			# optimizing the predictor
-			cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
 			
+			if args.use_exp_reward:
+				cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
+			else:
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_pred = T.mean((reconstruction_loss - baseline.T) ** 2)
+
 			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 			print "Loss predictor parameters:", params_loss_predictor
 
