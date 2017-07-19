@@ -32,7 +32,7 @@ parser.add_argument('-y', '--sg_inp', type=str, default='11111',
 					help='Customize input to synthetic subnetworks: Construct a string of 0,1 with 1 at inputs to be conditioned on')
 parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
-parser.add_argument('-w', '--max_grad', type=float, default=5.0,
+parser.add_argument('-w', '--max_grad', type=float, default=0.0,
 					help='Maximum elementwise mean squared norm of the target signal, otherwise gradient is clipped')
 # update frequencies
 parser.add_argument('-q', '--main_update_freq', type=int, default=1,
@@ -471,7 +471,10 @@ if args.mode == 'train':
 		weights_sum_sg += (val**2).sum()
 
 	# normalize target_gradients to have an upper bound on the norm
-	target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
+	if args.max_grad > 0.0:
+		target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
+	else:
+		target_gradients_clip = target_gradients
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples]
 	sg_cond_vars_symbol = [var_list[i] for i in range(5) if args.sg_inp[i] == '1']
