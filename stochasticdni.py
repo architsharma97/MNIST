@@ -474,6 +474,7 @@ if args.mode == 'train':
 	if args.max_grad > 0.0:
 		target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
 	else:
+		print "No gradient clipping"
 		target_gradients_clip = target_gradients
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples]
@@ -509,7 +510,7 @@ if args.mode == 'train':
 	f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 	
 	print "Training"
-	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
+	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
 	id_order = range(len(trc))
 
 	iters = 0
@@ -603,7 +604,7 @@ if args.mode == 'train':
 				params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
@@ -621,7 +622,7 @@ if args.mode == 'train':
 			params[key] = val.get_value()
 
 		# numpy saving
-		np.savez('./Results/' + args.latent_type + '/' + estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
+		np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 # Test
