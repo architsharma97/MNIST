@@ -72,7 +72,7 @@ parser.add_argument('-f', '--base_code', type=str, default='sg',
 # miscellaneous
 parser.add_argument('-e', '--random_seed', type=int, default=42, help='Seed to initialize random streams')
 parser.add_argument('-o', '--latent_type', type=str, default='disc', help='No other options')
-parser.add_argument('-p', '--clip_probs', type=int, default=1,
+parser.add_argument('-p', '--clip_probs', type=int, default=0,
 					help='clip latent probabilities (1) or not (0), useful for testing training under NaNs')
 
 args = parser.parse_args()
