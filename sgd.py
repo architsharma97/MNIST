@@ -44,9 +44,9 @@ class SGD():
             val = numpy.zeros((param.get_value(borrow=True).shape),dtype='float32')
             if self.momentum.get_value() > 0:
                 mom_param = theano.shared(value=val,borrow=True)
-                delta = mom_param*self.momentum - gparam * self.lr # update the momentum of gradient (similar to running avg.)
+                delta = mom_param * self.momentum - gparam * self.lr # update the momentum of gradient (similar to running avg.)
                 if self.nesterov:
-                    new_delta = delta*self.momentum - gparam * self.lr
+                    new_delta = delta * self.momentum - gparam * self.lr
                 else:
                     new_delta = delta
                 updates.append((param, param + new_delta))

@@ -293,7 +293,10 @@ elif args.latent_type == 'disc':
 
 	if args.estimator == 'SF':
 		# clipped for stability of gradients
-		latent_probs_r = T.clip(T.extra_ops.repeat(latent_probs, args.repeat, axis=0), 1e-7, 1-1e-7)
+		if args.clip_probs:
+			latent_probs_r = T.clip(T.extra_ops.repeat(latent_probs, args.repeat, axis=0), 1e-7, 1-1e-7)
+		else:
+			latent_probs_r = latent_probs
 				
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
