@@ -297,7 +297,7 @@ elif args.latent_type == 'disc':
 			latent_probs_r = T.clip(T.extra_ops.repeat(latent_probs, args.repeat, axis=0), 1e-7, 1-1e-7)
 		else:
 			latent_probs_r = latent_probs
-				
+
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
 	
@@ -398,10 +398,10 @@ if args.mode == 'train':
 			elif args.var_red == 'cmr':
 				# conditional mean is subtracted from the reconstruction loss to lower variance further
 				baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-				cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
 
 				# optimizing the predictor
-				cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
+				cost_pred = T.mean((reconstruction_loss - baseline.T) ** 2)
 				
 				params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 				print "Loss predictor parameters:", params_loss_predictor
