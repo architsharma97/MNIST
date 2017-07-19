@@ -444,7 +444,7 @@ if args.mode == 'train':
 			cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 
 			# optimizing the predictor
-			cost_pred = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
+			cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
 			
 			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 			print "Loss predictor parameters:", params_loss_predictor
