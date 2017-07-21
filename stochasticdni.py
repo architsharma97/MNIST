@@ -365,7 +365,10 @@ if args.bn_type == 0:
 else:
 	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 
-latent_probs = out3
+if args.clip_probs == 0:
+	latent_probs = out3
+else:
+	latent_probs = T.clip(out3, delta, 1. - delta)
 
 if args.mode == 'test' or args.target == 'REINFORCE':
 	# sample a bernoulli distribution, which a binomial of 1 iteration
@@ -432,21 +435,21 @@ if args.mode == 'train':
 		consider_constant = [reconstruction_loss, latent_samples]
 
 		if args.var_red is None:
-			cost_encoder = T.mean(reconstruction_loss * T.switch(latent_samples, T.log(latent_probs_clipped), T.log(1. - latent_probs_clipped)).sum(axis=1))
+			cost_encoder = T.mean(reconstruction_loss * T.switch(latent_samples, T.log(latent_probs), T.log(1. - latent_probs)).sum(axis=1))
 
 		elif args.var_red == 'mr':
 			# unconditional mean is subtracted from the reconstruction loss, to yield a relatively lower variance unbiased REINFORCE estimator
-			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * T.switch(latent_samples, T.log(latent_probs_clipped), T.log(1. - latent_probs_clipped)).sum(axis=1))
+			cost_encoder = T.mean((reconstruction_loss - T.mean(reconstruction_loss)) * T.switch(latent_samples, T.log(latent_probs), T.log(1. - latent_probs)).sum(axis=1))
 			
 		elif args.var_red == 'cmr':
 			# conditional mean is subtracted from the reconstruction loss to lower variance further
 			baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, gt_unrepeated], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
 			
 			if args.use_exp_reward:
-				cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * T.switch(latent_samples, T.log(latent_probs_clipped), T.log(1. - latent_probs_clipped)).sum(axis=1))
+				cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * T.switch(latent_samples, T.log(latent_probs), T.log(1. - latent_probs)).sum(axis=1))
 				cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
 			else:
-				cost_encoder = T.mean((reconstruction_loss - baseline.T) * T.switch(latent_samples, T.log(latent_probs_clipped), T.log(1. - latent_probs_clipped)).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * T.switch(latent_samples, T.log(latent_probs), T.log(1. - latent_probs)).sum(axis=1))
 				cost_pred = T.mean((reconstruction_loss - baseline.T) ** 2)
 
 			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
