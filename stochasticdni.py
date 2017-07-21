@@ -361,9 +361,11 @@ else:
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm=args.mode)
 out2 = fflayer(tparams, out1, _concat(ff_e, 'h'), batchnorm=args.mode)
 if args.bn_type == 0:
-	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=args.mode)
+	pre_out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin=None, batchnorm=args.mode)
 else:
-	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
+	pre_out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin=None, batchnorm=None)
+
+out3 = T.nnet.nnet.sigmoid(T.extra_ops.repeat(pre_out3, args.repeat, axis=0))
 
 if args.clip_probs == 0:
 	latent_probs = out3
@@ -422,7 +424,7 @@ if args.mode == 'train':
 	known_grads = OrderedDict()
 	var_list = [img_r, gt, latent_probs, gradz, latent_samples]
 	sg_cond_vars_actual = [var_list[i] for i in range(5) if args.sg_inp[i] == '1']
-	known_grads[out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -460,7 +462,7 @@ if args.mode == 'train':
 			grads_net = grads_encoder + grads_plp + grads_decoder
 
 		# computing target for synthetic gradient, will be output in every iteration
-		sg_target = T.grad(cost_encoder, wrt=out3, consider_constant=consider_constant)
+		sg_target = T.grad(cost_encoder, wrt=pre_out3, consider_constant=consider_constant)
 
 	elif args.target == 'ST':
 		print "Getting ST target"
