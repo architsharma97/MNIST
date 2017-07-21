@@ -359,14 +359,14 @@ else:
 
 # encoding
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm=args.mode)
-out2 = fflayer(tparams, out1, _concat(ff_e,'h'), batchnorm=args.mode)
+out2 = fflayer(tparams, out1, _concat(ff_e, 'h'), batchnorm=args.mode)
 if args.bn_type == 0:
 	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=args.mode)
 else:
 	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
 
 # repeat args.repeat-times so that for every input in a minibatch, there are args.repeat samples
-latent_probs = T.extra_ops.repeat(out3, args.repeat, axis=0)
+latent_probs = out3
 
 if args.mode == 'test' or args.target == 'REINFORCE':
 	# sample a bernoulli distribution, which a binomial of 1 iteration
@@ -406,6 +406,11 @@ if args.mode == 'train':
 	
 	print "Computing gradients wrt to decoder parameters"
 	cost_decoder = T.mean(reconstruction_loss)
+	
+	# regularization
+	weights_sum_dec = 0.
+	for val in param_dec:
+		weights_sum_dec += (val**2).sum()
 	grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 	
 	# for better estimation, converts into a learnt straight through estimator with ST/REINFORCE
@@ -448,7 +453,7 @@ if args.mode == 'train':
 				cost_encoder = T.mean(-(T.exp(-reconstruction_loss / args.exptemp) - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
 				cost_pred = T.mean((T.exp(-reconstruction_loss / args.exptemp) - baseline.T) ** 2)
 			else:
-				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * (T.switch(latent_samples, T.log(latent_probs_clipped), T.log(1. - latent_probs_clipped))).sum(axis=1))
 				cost_pred = T.mean((reconstruction_loss - baseline.T) ** 2)
 
 			params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
@@ -550,15 +555,16 @@ if args.mode == 'train':
 			
 			# subnetwork update
 			cost_sg = 'NC'
-			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).sum()):
+			tmag = 'NC'
+			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
 				cost_sg, tmag = f_update_sg(idlist, *outs[1:])
 				# f_update_sg(args.learning_rate)
 
 				epoch_cost_sg += cost_sg
 			
-			elif np.isnan((t**2).sum()):
-				print "NaN encountered at", iters	
-			
+			elif np.isnan((t**2).mean()):
+				print "NaN encountered at", iters
+
 			# decay mode
 			if args.update_style == 'decay':
 				 if iters == 2000:

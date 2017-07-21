@@ -65,7 +65,7 @@ parser.add_argument('-f', '--base_code', type=str, default='',
 					help='A unique identifier for saving purposes')
 
 # miscellaneous
-parser.add_argument('-p', '--clip_probs', type=int, default=1,
+parser.add_argument('-p', '--clip_probs', type=int, default=0,
 					help='clip latent probabilities (1) or not (0), useful for testing training under NaNs')
 parser.add_argument('-q', '--random_seed', type=int, default=42, help='Seed to initialize random streams')
 
@@ -296,7 +296,7 @@ elif args.latent_type == 'disc':
 		if args.clip_probs:
 			latent_probs_r = T.clip(T.extra_ops.repeat(latent_probs, args.repeat, axis=0), 1e-7, 1-1e-7)
 		else:
-			latent_probs_r = latent_probs
+			latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 
 		# sample a bernoulli distribution, which a binomial of 1 iteration
 		latent_samples = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
@@ -398,7 +398,7 @@ if args.mode == 'train':
 			elif args.var_red == 'cmr':
 				# conditional mean is subtracted from the reconstruction loss to lower variance further
 				baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-				cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_r, latent_samples).sum(axis=1))
+				cost_encoder = T.mean((reconstruction_loss - baseline.T) * (T.switch(latent_samples, T.log(latent_probs_r), T.log(1. - latent_probs_r))).sum(axis=1))
 
 				# optimizing the predictor
 				cost_pred = T.mean((reconstruction_loss - baseline.T) ** 2)
@@ -488,9 +488,8 @@ if args.mode == 'train':
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:
 				# fprint(idlist)
-				cost, xtra = f_grad_shared(idlist)	
+				cost, xtra= f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
-
 			f_update(args.learning_rate)
 
 			epoch_cost += cost
