@@ -5,13 +5,13 @@ from read_mnist import read, show
 import theano
 import theano.tensor as T
 from utils import init_weights, _concat
-from adam import adam
-from theano.compile.nanguardmode import NanGuardMode
 import argparse
+
+from adam import adam
+from sgd import SGD
 
 from collections import OrderedDict
 import time
-
 
 '''
 Compares different gradients in terms of bias, variance and directionality. Generates 250 latent samples per example with 250-sample REINFORCE considered as the true gradient.
@@ -287,14 +287,15 @@ if args.bn_type == 0:
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
 else:
 	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
-latent_probs_clipped = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
+
+latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
 
 # sample a bernoulli distribution, which a binomial of 1 iteration
-latent_samples_uncorrected = srng.binomial(size=latent_probs_clipped.shape, n=1, p=latent_probs_clipped, dtype=theano.config.floatX)
+latent_samples_uncorrected = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
 
 # for stop gradients trick
-dummy = latent_samples_uncorrected - latent_probs_clipped
-latent_samples = latent_probs_clipped + dummy
+dummy = latent_samples_uncorrected - latent_probs_r
+latent_samples = latent_probs_r + dummy
 
 # decoding
 outz = fflayer(tparams, latent_samples, _concat(ff_d, 'n'))
@@ -318,9 +319,9 @@ grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 
 # REINFORCE gradients: conditional mean is subtracted from the reconstruction loss to lower variance further
 baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
-cost_encoder = T.mean((reconstruction_loss - baseline.T) * -T.nnet.nnet.binary_crossentropy(latent_probs_clipped, latent_samples).sum(axis=1))
+cost_encoder = T.mean((reconstruction_loss - baseline.T) * T.switch(latent_samples, T.log(latent_probs_r), T.log(1. - latent_probs_r)).sum(axis=1))
 consider_constant = [reconstruction_loss, latent_samples, baseline]
-grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r] + [latent_probs], consider_constant=consider_constant)
+grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r, latent_probs], consider_constant=consider_constant)
 
 # true gradient is scaled up 100 times example wise and 1-sample reinforce is scaled up by 250*100 to account for the "mean" costs
 true_gradient = grads_encoder[-1] # * args.batch_size
@@ -356,14 +357,14 @@ param_sg = [val for key, val in tparams.iteritems() if ('sg' in key) and ('rm' n
 gradz = args.repeat * T.grad(cost_decoder, wrt=latent_samples) # * args.batch_size
 
 # the multiplications by repeat/batch_size are not carried out because synthetic gradients would produce the same gradients even if one sample/example was given.
-var_list = [img_r, gt, latent_probs_clipped, gradz, latent_samples]
+var_list = [img_r, gt, latent_probs_r, gradz, latent_samples]
 sg_r = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(var_list, axis=1), mode='test')
 ez_sg = sg_r.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 ez_sg_norm = (ez_sg ** 2).sum() # / args.batch_size
 
 bias2_sg = ((ez_sg - true_gradient) ** 2).sum() # / args.batch_size
 var_sg = ((sg_r - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.repeat) # * args.batch_size)
-sg_samedir = T.cast((ez_sg * true_gradient).sum(axis=1) > 0, 'float32').sum() / args.batch_size
+sg_samedir = T.cast((sg_r * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # optimizing the synthetic gradient subnetwork
 loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img_r, gt, activation, latent_gradients, samples], axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
@@ -376,7 +377,7 @@ lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
 '''Do not forget to divide by batch size, when you return from this pretense'''
-outs = [cost_decoder, true_gradient, latent_probs_clipped, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, true_gradient, latent_probs_r, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [target_gradients, activation, latent_gradients, samples]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
@@ -393,7 +394,11 @@ for key, val in tparams.iteritems():
 
 print "Setting up optimizers"
 f_grad_shared, f_update = adam(lr, tparams_net, grads, inps_net, outs)
-f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
+# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, loss_sg)
+
+# sgd with momentum updates
+sgd = SGD(lr=args.learning_rate)
+f_update_sg = theano.function(inps_sg, loss_sg, updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 
 print "Training"
 cost_report = open('./Results/disc/SF/gradcomp_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -420,8 +425,8 @@ while condition == False:
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
-		cost_sg = f_grad_shared_sg(idlist, t, lpc, gradz, ls)
-		f_update_sg(args.learning_rate)
+		cost_sg = f_update_sg(idlist, t, lpc, gradz, ls)
+		# f_update_sg(args.learning_rate)
 		
 		epoch_cost += cost
 		# epoch, batch id, main networks cost, norm of true gradient, bias-reinforce, variance-reinforce, reinforce half-space correlation, straight-through squared norm, bias-straight through, variance-straight through, reinforce half-space correlation, synthetic gradient squared norm, bias-synthetic gradient, variance synthetic gradient, half-space correlation, time of computation
