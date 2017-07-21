@@ -394,7 +394,7 @@ else:
 # Training
 if args.mode == 'train':
 	# --------------------Gradients for main network----------------------------------------------------------------------------
-	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).mean(axis=1)
+	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 	print "Computing synthetic gradients"
 
 	# separate parameters for encoder, decoder and sg subnetworks
