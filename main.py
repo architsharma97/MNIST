@@ -343,7 +343,7 @@ else:
 # Training
 if args.mode == 'train':
 
-	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
+	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).mean(axis=1)
 
 	# Uses the reparametrization trick
 	if args.estimator == 'PD':
