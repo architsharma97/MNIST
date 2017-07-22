@@ -85,7 +85,7 @@ else:
 	srng = T.shared_randomstreams.RandomStreams(seed=args.random_seed)
 
 
-code_name = args.base_code + '_' + str(args.repeat) + '_gc' + str(args.max_grad)
+code_name = args.base_code + '_' + str(args.repeat)
 
 estimator = 'synthetic_gradients'
 
