@@ -284,11 +284,12 @@ out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm='train')
 out2 = fflayer(tparams, out1, _concat(ff_e,'h'), batchnorm='train')
 
 if args.bn_type == 0:
-	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm='train')
+	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin=None, batchnorm='train')
 else:
-	latent_probs = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin='sigmoid', batchnorm=None)
+	out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin=None, batchnorm=None)
 
-latent_probs_r = T.extra_ops.repeat(latent_probs, args.repeat, axis=0)
+out3_r = T.extra_ops.repeat(out3, args.repeat, axis=0)
+latent_probs_r = T.nnet.nnet.sigmoid(out3_r)
 
 # sample a bernoulli distribution, which a binomial of 1 iteration
 latent_samples_uncorrected = srng.binomial(size=latent_probs_r.shape, n=1, p=latent_probs_r, dtype=theano.config.floatX)
@@ -321,20 +322,18 @@ grads_decoder = T.grad(cost_decoder, wrt=param_dec)
 baseline = T.extra_ops.repeat(fflayer(tparams, T.concatenate([img, train_gt[img_ids, :]], axis=1), 'loss_pred', nonlin='relu'), args.repeat, axis=0)
 cost_encoder = T.mean((reconstruction_loss - baseline.T) * T.switch(latent_samples, T.log(latent_probs_r), T.log(1. - latent_probs_r)).sum(axis=1))
 consider_constant = [reconstruction_loss, latent_samples, baseline]
-grads_encoder = T.grad(cost_encoder, wrt=param_enc + [latent_probs_r, latent_probs], consider_constant=consider_constant)
+grads_encoder = T.grad(cost_encoder, wrt=param_enc + [out3, out3_r], consider_constant=consider_constant)
 
 # true gradient is scaled up 100 times example wise and 1-sample reinforce is scaled up by 250*100 to account for the "mean" costs
-true_gradient = grads_encoder[-1] # * args.batch_size
+true_gradient = grads_encoder[-2] # * args.batch_size
 true_gradient_norm = (true_gradient ** 2).sum() # / args.batch_size
-reinforce_1 = args.repeat * grads_encoder[-2] # * args.batch_size
+reinforce_1 = args.repeat * grads_encoder[-1] # * args.batch_size
 grads_encoder = grads_encoder[:-2]
 
 # optimizing the loss predictor for conditional mean baseline
 cost_pred = 0.5 * ((reconstruction_loss - baseline.T) ** 2).sum()
 params_loss_predictor = [val for key, val in tparams.iteritems() if 'loss_pred' in key]
 grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
-
-grads = grads_encoder + grads_plp + grads_decoder
 
 # computation of different gradients, bias and variances: we have already computed true gradient example wise above
 temp = T.extra_ops.repeat(true_gradient, args.repeat, axis=0)
@@ -345,7 +344,7 @@ var_reinforce = ((reinforce_1 - temp) ** 2).sum() / (args.repeat) # * args.batch
 r_samedir = T.cast((reinforce_1 * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
 
 # bias-variance decomposition of straight through estimator
-st = args.repeat * T.grad(cost_decoder, wrt=latent_probs_r, consider_constant=[dummy]) # * args.batch_size 
+st = args.repeat * T.grad(cost_decoder, wrt=out3_r, consider_constant=[dummy]) # * args.batch_size 
 ez_st = st.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 ez_st_norm = (ez_st ** 2).sum() # / args.batch_size
 bias2_st = ((ez_st - true_gradient) ** 2).sum() # / args.batch_size
@@ -365,19 +364,21 @@ ez_sg_norm = (ez_sg ** 2).sum() # / args.batch_size
 bias2_sg = ((ez_sg - true_gradient) ** 2).sum() # / args.batch_size
 var_sg = ((sg_r - T.extra_ops.repeat(ez_sg, args.repeat, axis=0)) ** 2).sum() / (args.repeat) # * args.batch_size)
 sg_samedir = T.cast((sg_r * temp).sum(axis=1) > 0, 'float32').sum() / (args.batch_size * args.repeat)
+grads_encoder_sg = T.grad(None, wrt=param_enc, known_grads={out3:ez_sg})
 
 # optimizing the synthetic gradient subnetwork
 loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate([img_r, gt, activation, latent_gradients, samples], axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 grads_sg = T.grad(loss_sg, wrt=param_sg)
 
+# final gradients for the main network
+grads = grads_encoder_sg + grads_plp + grads_decoder
 # ------------------------------------------------------------------ General training routine ----------------------------------------------------------------------------------
 
 # learning rate
 lr = T.scalar('lr', dtype='float32')
 
 inps_net = [img_ids]
-'''Do not forget to divide by batch size, when you return from this pretense'''
-outs = [cost_decoder, true_gradient, latent_probs_r, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
+outs = [cost_decoder, reinforce_1.reshape((args.batch_size, args.repeat, latent_dim))[:,0,:], latent_probs_r, gradz, latent_samples, true_gradient_norm, bias2_reinforce, var_reinforce, r_samedir, ez_st_norm, bias2_st, var_st, st_samedir, ez_sg_norm, bias2_sg, var_sg, sg_samedir]
 inps_sg = inps_net + [target_gradients, activation, latent_gradients, samples]
 tparams_net = OrderedDict()
 tparams_sg = OrderedDict()
