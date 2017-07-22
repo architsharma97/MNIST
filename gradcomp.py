@@ -371,7 +371,7 @@ loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.con
 grads_sg = T.grad(loss_sg, wrt=param_sg)
 
 # final gradients for the main network
-grads = grads_encoder_sg + grads_plp + grads_decoder
+grads = grads_encoder + grads_plp + grads_decoder
 # ------------------------------------------------------------------ General training routine ----------------------------------------------------------------------------------
 
 # learning rate
@@ -422,7 +422,7 @@ while condition == False:
 
 		idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 		
-		cost, t, lpc, gradz, ls, tgn, br, vr, sr, sn, bs, vs, ss, sgn, bsg, vsg, ssg = f_grad_shared(idlist)	
+		cost, t, lpc, gradz, ls, tgn, br, vr, sr, sn, bs, vs, ss, sgn, bsg, vsg, ssg = f_grad_shared(idlist)
 		min_cost = min(min_cost, cost)
 		f_update(args.learning_rate)
 		
