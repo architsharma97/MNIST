@@ -53,6 +53,7 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('-ab', '--sg_learning_rate', type=float, default=0.0001, help='Learning rate for synthetic gradient subnetwork')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
 parser.add_argument('-k', '--sg_reg', type=float, default=0.0, help='L2 regularization of subnetwork cost')
@@ -509,7 +510,7 @@ if args.mode == 'train':
 	# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
 
 	# sgd with momentum updates
-	sgd = SGD(lr=args.learning_rate)
+	sgd = SGD(lr=args.sg_learning_rate)
 	f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 	
 	print "Training"
@@ -556,7 +557,7 @@ if args.mode == 'train':
 			tmag = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
 				cost_sg, tmag = f_update_sg(idlist, *outs[1:])
-				# f_update_sg(args.learning_rate)
+				# f_update_sg(args.sg_learning_rate)
 
 				epoch_cost_sg += cost_sg
 			
