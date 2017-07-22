@@ -431,12 +431,14 @@ if args.mode == 'train':
 	if args.estimator == 'ST':
 		print "Computing gradients using ST"
 		cost = T.mean(reconstruction_loss)
-		param_list = [val for key, val in tparams.iteritems()]
+		param_list = [val for key, val in tparams.iteritems() if ('rm' not in key) and ('rv' not in key)]
 
 		if args.latent_type =='disc':
 			# equivalent to stop_gradient trick in tensorflow
-			grads = T.grad(cost, wrt=param_list, consider_constant=[dummy])
-
+			grads = T.grad(cost, wrt=param_list + [latent_probs], consider_constant=[dummy])
+			xtranorm = T.mean(grads[-1] ** 2)
+			grads = grads[:-1]
+			
 		elif args.latent_type == 'cont':
 			print "Nothing defined for this state"
 
