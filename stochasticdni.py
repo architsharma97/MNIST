@@ -102,7 +102,7 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False, skip_running_vars=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
@@ -121,12 +121,15 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 			dim = nout
 		params[_concat(prefix, 'g')] = np.ones((dim,), dtype=np.float32)
 		params[_concat(prefix, 'be')] = np.zeros((dim,)).astype('float32')
-		params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
-		params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
-	
+		
+		# it is not necessary for deep synthetic subnetworks to track running averages as they are not used in test time
+		if not skip_running_vars:
+			params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
+			params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
+
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None, skip_running_vars=False):
 	'''
 	A feedforward layer
 	Note: None means dropout/batch normalization is not used.
@@ -147,10 +150,14 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 		invstd = T.inv(T.sqrt(var + 1e-4))
 		inp = (inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
 		
-		running_average_factor = 0.1	
+		running_average_factor = 0.1
 		m = T.cast(T.prod(inp.shape) / T.prod(mean.shape), 'float32')
-		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
-		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+
+		# shared variable updates
+		if not skip_running_vars:
+			# define new variables which will be used to update the shared variables
+			tparams[_concat(prefix, 'rmu')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
+			tparams[_concat(prefix, 'rvu')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
 		
 	elif batchnorm == 'test':
 		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
@@ -181,7 +188,8 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 
 def param_init_sgmod(params, prefix, units, zero_init=True):
 	'''
-	Initialization for synthetic gradient subnetwork
+	Initialization for synthetic gradient subnetwork.
+	The batchnormalization is recommended to be used in 'train' mode only, when predicting gradients.
 	'''
 	global args
 	
@@ -203,10 +211,10 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True)
 			if args.bn_type == 0:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
 			else:
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
 
@@ -217,7 +225,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'g')] = np.ones((units,), dtype=np.float32)
 			params[_concat(prefix, 'be')] = np.zeros((units,)).astype('float32')
 
-			params = param_init_fflayer(params, _concat(prefix, '1'), units, 1024, batchnorm=True)
+			params = param_init_fflayer(params, _concat(prefix, '1'), units, 1024, batchnorm=True, skip_running_vars=True)
 			params = param_init_fflayer(params, _concat(prefix, '2'), 1024, units, zero_init=True)
 
 	return params
@@ -237,13 +245,13 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None)
-		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None)
+		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
+		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		
 		if args.sg_type == 'deep':
-			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None)
+			return fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh + outi, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 	
 	elif args.sg_type == 'custom':
 		# channel 2 which forms the skip connection
@@ -254,7 +262,7 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		var = inp.var((0,), keepdims=True)
 		invstd = T.inv(T.sqrt(var + 1e-4))
 		out1 = T.nnet.nnet.relu((inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')])
-		out2 = fflayer(tparams, out1, _concat(prefix, '1'), nonlin='relu', batchnorm='train')
+		out2 = fflayer(tparams, out1, _concat(prefix, '1'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 
 		# channel 1 + channel 2
 		return fflayer(tparams, out2, _concat(prefix, '2'), nonlin=None) + inp
@@ -361,6 +369,7 @@ else:
 # encoding
 out1 = fflayer(tparams, img, _concat(ff_e, 'i'), batchnorm=args.mode)
 out2 = fflayer(tparams, out1, _concat(ff_e, 'h'), batchnorm=args.mode)
+
 if args.bn_type == 0:
 	pre_out3 = fflayer(tparams, out2, _concat(ff_e, 'bern'), nonlin=None, batchnorm=args.mode)
 else:
@@ -495,18 +504,20 @@ if args.mode == 'train':
 	inps_sg = inps_net + [target_gradients] + var_list[2:]
 	tparams_net = OrderedDict()
 	tparams_sg = OrderedDict()
+	updates_bn = []
 	for key, val in tparams.iteritems():
 		print key
-		# running means and running variances should not be included in the list for which gradients are computed
-		if 'rm' in key or 'rv' in key:
+		if ('rmu' in key) or ('rvu' in key):
 			continue
+		elif 'rm' in key or 'rv' in key:
+			updates_bn.append((tparams[key], tparams[key + 'u']))
 		elif 'sg' in key:
 			tparams_sg[key] = val
 		else:
 			tparams_net[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn)
 	# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
 
 	# sgd with momentum updates
@@ -606,7 +617,8 @@ if args.mode == 'train':
 
 			params = {}
 			for key, val in tparams.iteritems():
-				params[key] = val.get_value()
+				if not (('rmu' in key) or ('rvu' in key)):
+					params[key] = val.get_value()
 
 			# numpy saving
 			np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
@@ -624,7 +636,8 @@ if args.mode == 'train':
 
 		params = {}
 		for key, val in tparams.iteritems():
-			params[key] = val.get_value()
+			if not (('rmu' in key) or ('rvu' in key)):
+				params[key] = val.get_value()
 
 		# numpy saving
 		np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
@@ -632,20 +645,18 @@ if args.mode == 'train':
 
 # Test
 else:
-	prediction = probs > 0.5
-
-	loss = abs(prediction-gt).sum()
+	loss = T.mean(T.nnet.binary_crossentropy(probs, gt))
+	# pred = probs > 0.5
 
 	# compiling test function
 	inps = [img_ids]
-	f = theano.function(inps, [prediction, loss])
-	idx = 10
-	pred, loss = f([idx])
+	f = theano.function(inps, [loss])
+	loss = f(range(len(tec)))
 
-	show(tec[idx].reshape(28,28))
+	# show(tec[idx].reshape(28,28))
 
-	reconstructed_img = np.zeros((28*28,))
-	reconstructed_img[:14*28] = tep[idx][0]
-	reconstructed_img[14*28:] = pred
-	show(reconstructed_img.reshape(28,28))
+	# reconstructed_img = np.zeros((28*28,))
+	# reconstructed_img[:14*28] = tep[idx][0]
+	# reconstructed_img[14*28:] = pred
+	# show(reconstructed_img.reshape(28,28))
 	print loss

@@ -99,7 +99,7 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False, skip_running_vars=False):
 	'''
 	Initializes weights for a feedforward layer
 	'''
@@ -118,12 +118,15 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 			dim = nout
 		params[_concat(prefix, 'g')] = np.ones((dim,), dtype=np.float32)
 		params[_concat(prefix, 'be')] = np.zeros((dim,)).astype('float32')
-		params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
-		params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
-	
+		
+		# it is not necessary for deep synthetic subnetworks to track running averages as they are not used in test time
+		if not skip_running_vars:
+			params[_concat(prefix, 'rm')] = np.zeros((1, dim)).astype('float32')
+			params[_concat(prefix, 'rv')] = np.ones((1, dim), dtype=np.float32)
+
 	return params
 
-def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None):
+def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout=None, skip_running_vars=False):
 	'''
 	A feedforward layer
 	Note: None means dropout/batch normalization is not used.
@@ -144,10 +147,14 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 		invstd = T.inv(T.sqrt(var + 1e-4))
 		inp = (inp - mean) * tparams[_concat(prefix, 'g')] * invstd + tparams[_concat(prefix, 'be')]
 		
-		running_average_factor = 0.1	
+		running_average_factor = 0.1
 		m = T.cast(T.prod(inp.shape) / T.prod(mean.shape), 'float32')
-		tparams[_concat(prefix, 'rm')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
-		tparams[_concat(prefix, 'rv')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
+
+		# shared variable updates
+		if not skip_running_vars:
+			# define new variables which will be used to update the shared variables
+			tparams[_concat(prefix, 'rmu')] = tparams[_concat(prefix, 'rm')] * (1 - running_average_factor) + mean * running_average_factor
+			tparams[_concat(prefix, 'rvu')] = tparams[_concat(prefix, 'rv')] * (1 - running_average_factor) + (m / (m - 1)) * var * running_average_factor
 		
 	elif batchnorm == 'test':
 		inp = (inp - tparams[_concat(prefix, 'rm')].flatten()) * tparams[_concat(prefix, 'g')] / T.sqrt(tparams[_concat(prefix, 'rv')].flatten() + 1e-4) + tparams[_concat(prefix, 'be')]
@@ -159,7 +166,7 @@ def fflayer(tparams, state_below, prefix, nonlin='tanh', batchnorm=None, dropout
 
 	# dropout is carried out with fixed probability
 	if dropout == 'train':
-		dropmask = srng.binomial(n=1, p=1. - args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
+		dropmask = srng.binomial(n=1, p=1.-args.dropout_prob, size=preact.shape, dtype=theano.config.floatX)
 		preact *= dropmask
 	
 	elif dropout == 'test':
@@ -452,15 +459,17 @@ if args.mode == 'train':
 		anneal_rate = 0.00003
 
 	tparams_net = OrderedDict()
+	updates_bn = []
 	for key, val in tparams.iteritems():
-		# running means and running variances should not be included in the list for which gradients are computed
-		if 'rm' in key or 'rv' in key:
+		if ('rmu' in key) or ('rvu' in key):
 			continue
+		elif 'rm' in key or 'rv' in key:
+			updates_bn.append((tparams[key], tparams[key + 'u']))
 		else:
 			tparams_net[key] = val
 	
 	print "Setting up optimizer"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, [cost, xtranorm])
+	f_grad_shared, f_update = adam(lr, tparams_net, grads, inps, [cost, xtranorm], ups=updates_bn)
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -505,7 +514,8 @@ if args.mode == 'train':
 
 			params = {}
 			for key, val in tparams.iteritems():
-				params[key] = val.get_value()
+				if not (('rmu' in key) or ('rvu' in key)):
+					params[key] = val.get_value()
 
 			# numpy saving
 			np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
@@ -521,9 +531,9 @@ if args.mode == 'train':
 	if epoch % args.save_freq != 0:
 		print "Saving..."
 
-		params = {}
 		for key, val in tparams.iteritems():
-			params[key] = val.get_value()
+				if not (('rmu' in key) or ('rvu' in key)):
+					params[key] = val.get_value()
 
 		# numpy saving
 		np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
@@ -532,26 +542,23 @@ if args.mode == 'train':
 # Test
 else:
 	# useful for one example at a time only
-	prediction = probs > 0.5
-
-	loss = abs(prediction - gt).sum()
+	loss = T.mean(T.nnet.binary_crossentropy(probs, gt))
 
 	# compiling test function
 	inps = [img_ids]
 	if args.estimator == 'PD' and args.latent_type =='disc':
 		inps += [temperature]
 
-	f = theano.function(inps, [prediction, loss])
-	idx = 10
+	f = theano.function(inps, [loss])
 	if args.estimator == 'PD' and args.latent_type =='disc':
-		pred, loss = f([idx], 0.5)
+		loss = f(range(len(tec)), 0.5)
 	else:
-		pred, loss = f([idx])
+		loss = f(range(len(tec)))
 
-	show(tec[idx].reshape(28,28))
+	# show(tec[idx].reshape(28,28))
 
-	reconstructed_img = np.zeros((28*28,))
-	reconstructed_img[:14*28] = tep[idx][0]
-	reconstructed_img[14*28:] = pred
-	show(reconstructed_img.reshape(28,28))
+	# reconstructed_img = np.zeros((28*28,))
+	# reconstructed_img[:14*28] = tep[idx][0]
+	# reconstructed_img[14*28:] = pred
+	# show(reconstructed_img.reshape(28,28))
 	print loss

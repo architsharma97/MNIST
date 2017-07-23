@@ -5,12 +5,15 @@ import theano
 import theano.tensor as tensor
 import numpy
 
-# name(hyperp, tparams, grads, inputs (list), cost) = f_grad_shared, f_update
-def adam(lr, tparams, grads, inp, cost):
+# name(hyperp, tparams, grads, inputs (list), output(list), additional_updates (list of tuples, like batchnorm)) = f_grad_shared, f_update
+def adam(lr, tparams, grads, inp, cost, ups=None):
 	gshared = [theano.shared(p.get_value() * 0., name='%s_grad'%k) for k, p in tparams.iteritems()]
 	gsup = [(gs, g) for gs, g in zip(gshared, grads)]
 
-	f_grad_shared = theano.function(inp, cost, updates=gsup, on_unused_input='ignore', profile=False)
+	if ups is not None:
+		f_grad_shared = theano.function(inp, cost, updates=gsup + ups, on_unused_input='ignore', profile=False)
+	else:
+		f_grad_shared = theano.function(inp, cost, updates=gsup, on_unused_input='ignore', profile=False)
 
 	lr0 = 0.0002
 	b1 = 0.1
