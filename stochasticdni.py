@@ -549,9 +549,8 @@ if args.mode == 'train':
 		if iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6:
 			print "Updated subnetwork learning rate"
 			args.sg_learning_rate /= 0.5
-			sgd = SGD(lr=args.sg_learning_rate)
-			f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
-
+			sgd.lr.set_value(args.sg_learning_rate)
+			
 		print "Epoch " + str(epoch + 1),
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
