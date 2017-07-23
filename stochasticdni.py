@@ -545,8 +545,14 @@ if args.mode == 'train':
 	# reinit = theano.function([gam, bet, w1, w2, b1, b2], None, updates=reinit_dict)
 
 	while condition == False:
-		print "Epoch " + str(epoch + 1),
+		# handcrafted learning rate schedule: Every 20 epochs slash learning rate by half
+		if iters % (20 * 600) and args.sg_learning_rate > 1e-6:
+			print "Updated subnetwork learning rate"
+			args.sg_learning_rate /= 0.5
+			sgd = SGD(lr=args.sg_learning_rate)
+			f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 
+		print "Epoch " + str(epoch + 1),
 		np.random.shuffle(id_order)
 		epoch_cost = 0.
 		epoch_cost_sg = 0.
