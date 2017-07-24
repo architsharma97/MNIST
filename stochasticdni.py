@@ -440,9 +440,6 @@ if args.mode == 'train':
 	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
-	# combine in this order only
-	grads_net = grads_encoder + grads_decoder
-	
 	# ---------------Gradients for synthetic gradient network-------------------------------------------------------------------
 	if args.target == 'REINFORCE':
 		print "Getting REINFORCE target"
@@ -472,7 +469,7 @@ if args.mode == 'train':
 
 			grads_plp = T.grad(cost_pred, wrt=params_loss_predictor, consider_constant=[reconstruction_loss])
 			consider_constant += [baseline]
-			grads_net = grads_encoder + grads_plp + grads_decoder
+			grads_decoder = grads_plp + grads_decoder
 
 		# computing target for synthetic gradient, will be output in every iteration
 		sg_target = T.grad(cost_encoder, wrt=pre_out3, consider_constant=consider_constant)
@@ -480,7 +477,10 @@ if args.mode == 'train':
 	elif args.target == 'ST':
 		print "Getting ST target"
 		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=[dummy])
-	
+
+	# combine in this order only
+	grads_net = grads_encoder + grads_decoder
+
 	# regularization
 	weights_sum_sg = 0.
 	for val in param_sg:
@@ -505,27 +505,45 @@ if args.mode == 'train':
 
 	inps_net = [img_ids]
 	inps_sg = inps_net + [target_gradients] + var_list[2:]
-	tparams_net = OrderedDict()
-	tparams_sg = OrderedDict()
+	tparams_net = OrderedDict() # All parameters for the main network
+	tparams_dec = OrderedDict() # Decoder and loss prediction network parameters
+	tparams_enc = OrderedDict() # Encoder parameters
+	tparams_sg = OrderedDict() # Synthetic subnetwork parameters
 	updates_bn = []
+	updates_bn_enc = []
+	updates_bn_dec = []
 	for key, val in tparams.iteritems():
 		print key
-		if ('rmu' in key) or ('rvu' in key):
+		# update for running variables
+		if 'rmu' in key or 'rvu' in key:
 			continue
+		# the running shared variables: updated to the main network and encoder/decoder list
 		elif 'rm' in key or 'rv' in key:
 			updates_bn.append((tparams[key], tparams[key + 'u']))
+			if 'enc' in key:
+				updates_bn_enc.append((tparams[key], tparams[key + 'u']))
+			else:
+				updates_bn_dec.append((tparams[key], tparams[key + 'u']))
+
+		# parameter allocation to right dictionaries 
 		elif 'sg' in key:
 			tparams_sg[key] = val
 		else:
 			tparams_net[key] = val
+			if 'enc' in key:
+				tparams_enc[key] = val
+			else:
+				tparams_dec[key] = val
 
 	print "Setting up optimizers"
 	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn)
-	# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
-
+	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
+	f_grad_shared_dec, f_update_dec = adam(lr, tparams_dec, grads_decoder, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn_dec)
+	f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
+	
 	# sgd with momentum updates
 	sgd = SGD(lr=args.sg_learning_rate)
-	f_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
+	sgd_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 	
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -566,16 +584,16 @@ if args.mode == 'train':
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 			
 			# main network update
-			outs = f_grad_shared(idlist)
+			outs = f_grad_shared_dec(idlist)
 			cost, t = outs[:2]
 			if iters % args.main_update_freq == 0:
-				f_update(args.learning_rate)
+				f_update_dec(args.learning_rate)
 			
 			# subnetwork update
 			cost_sg = 'NC'
 			tmag = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
-				cost_sg, tmag = f_update_sg(idlist, *outs[1:])
+				cost_sg, tmag = sgd_update_sg(idlist, *outs[1:])
 				# f_update_sg(args.sg_learning_rate)
 
 				epoch_cost_sg += cost_sg
@@ -583,6 +601,11 @@ if args.mode == 'train':
 			elif np.isnan((t**2).mean()):
 				print "NaN encountered at", iters
 
+			sg_avg_norm = f_grad_shared_enc(idlist)
+			# print sg_avg_norm
+			if iters % args.main_update_freq == 0:
+				f_update_enc(args.learning_rate)
+			
 			# decay mode
 			if args.update_style == 'decay':
 				 if iters == 2000:
