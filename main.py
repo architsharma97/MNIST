@@ -44,6 +44,7 @@ parser.add_argument('-g', '--sample_style', type=int, default=0,
 					help='Gumbel-softmax sampling can be followed up by hard sampling (1). It would ensure that the sampled vector contains 1s and 0s.')
 # while testing
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
+parser.add_argument('-aa', '--val_file', type=str, default=None, help='File where validation data is written')
 
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
@@ -561,4 +562,9 @@ else:
 	# reconstructed_img[:14*28] = tep[idx][0]
 	# reconstructed_img[14*28:] = pred
 	# show(reconstructed_img.reshape(28,28))
+	if args.val_file is None:
+		print loss
+	else:
+		val_report = open(args.val_file, 'a')
+		val_report.write(str(loss[0]) + '\n')
 	print loss
