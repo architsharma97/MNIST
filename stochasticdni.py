@@ -50,6 +50,7 @@ parser.add_argument('-d', '--exptemp', type=float, default=100.0,
 
 # while testing
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
+parser.add_argument('-ac', '--val_file',type=str, default=None, help='Write validation results to a file')
 
 # hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
@@ -329,10 +330,12 @@ for key, val in params.iteritems():
 # Training graph
 if args.mode == 'train':
 	print "Constructing graph for training"
-	# create shared variables for dataset for easier access
-	top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
-	bot = np.asarray([splitimg[1] for splitimg in trp], dtype=np.float32)
 	
+	# create shared variables for dataset for easier access
+	if args.mode == 'train':
+		top = np.asarray([splitimg[0] for splitimg in trp], dtype=np.float32)
+		bot = np.asarray([splitimg[1] for splitimg in trp], dtype=np.float32)
+
 	train = theano.shared(top, name='train')
 	train_gt = theano.shared(bot, name='train_gt')
 
@@ -358,8 +361,8 @@ else:
 	top = np.asarray([splitimg[0] for splitimg in tep], dtype=np.float32)
 	bot = np.asarray([splitimg[1] for splitimg in tep], dtype=np.float32)
 	
-	test = theano.shared(top, name='train')
-	test_gt = theano.shared(bot, name='train_gt')
+	test = theano.shared(top, name='test')
+	test_gt = theano.shared(bot, name='test_gt')
 
 	# image ids
 	img_ids = T.vector('ids', dtype='int64')
@@ -546,10 +549,10 @@ if args.mode == 'train':
 
 	while condition == False:
 		# handcrafted learning rate schedule: Every 20 epochs slash learning rate by half
-		if iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6:
-			print "Updated subnetwork learning rate"
-			args.sg_learning_rate /= 2
-			sgd.lr.set_value(args.sg_learning_rate)
+		# if iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6:
+		# 	print "Updated subnetwork learning rate"
+		# 	args.sg_learning_rate /= 2
+		# 	sgd.lr.set_value(args.sg_learning_rate)
 			
 		print "Epoch " + str(epoch + 1),
 		np.random.shuffle(id_order)
@@ -618,7 +621,7 @@ if args.mode == 'train':
 		
 		# save every args.save_freq epochs
 		if (epoch + 1) % args.save_freq == 0:
-			print "Saving..."
+			print "Saving...",
 
 			params = {}
 			for key, val in tparams.iteritems():
@@ -637,7 +640,7 @@ if args.mode == 'train':
 
 	# saving the final model
 	if epoch % args.save_freq != 0:
-		print "Saving..."
+		print "Saving...",
 
 		params = {}
 		for key, val in tparams.iteritems():
@@ -664,4 +667,8 @@ else:
 	# reconstructed_img[:14*28] = tep[idx][0]
 	# reconstructed_img[14*28:] = pred
 	# show(reconstructed_img.reshape(28,28))
-	print loss
+	if args.val_file is None:
+		print loss
+	else:
+		val_report = open(args.val_file, 'a')
+		val_report.write(str(loss[0]) + '\n')
