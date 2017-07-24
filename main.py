@@ -567,4 +567,3 @@ else:
 	else:
 		val_report = open(args.val_file, 'a')
 		val_report.write(str(loss[0]) + '\n')
-	print loss
