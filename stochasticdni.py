@@ -28,7 +28,7 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
-parser.add_argument('-y', '--sg_inp', type=str, default='111110',
+parser.add_argument('-y', '--sg_inp', type=str, default='11111',
 					help='Customize input to synthetic subnetworks: Construct a string of 0,1 with 1 at inputs to be conditioned on')
 parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
@@ -204,7 +204,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
 	inp_list = [14*28, 14*28, units, units, units, 1]
 	inp_size = 0
-	for i in range(6):
+	for i in range(5):
 		if args.sg_inp[i] == '1':
 			inp_size += inp_list[i]
 
