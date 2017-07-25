@@ -50,6 +50,8 @@ parser.add_argument('-aa', '--val_file', type=str, default=None, help='File wher
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 parser.add_argument('-c', '--regularization', type=float, default=0., help='Regularization constant')
+parser.add_argument('-ab', '--slash_rate', type=float, default=1.0, 
+					help='Factor by which learning rate is reduced every 20 epochs. No reduction by default')
 
 # termination of training
 parser.add_argument('-t', '--term_condition', type=str, default='epochs', 
@@ -483,9 +485,9 @@ if args.mode == 'train':
 	condition = False
 
 	while condition == False:
-		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6 and args.learning_rate > 1e-6:
+		if iters != 0 and iters % (20 * 600) == 0 and args.learning_rate > 1e-7:
 			print "Updated subnetwork learning rate"
-			args.learning_rate /= 2
+			args.learning_rate /= args.slash_rate
 
 		print "Epoch " + str(epoch + 1),
 
@@ -494,12 +496,12 @@ if args.mode == 'train':
 		epoch_start = time.time()
 		for batch_id in range(len(trc)/args.batch_size):
 			batch_start = time.time()
+			iters += 1
 
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 			if args.estimator == 'PD' and args.latent_type == 'disc':
 				# fprint(idlist, cur_temp)
 				cost = f_grad_shared(idlist, cur_temp)
-				iters += 1
 				if iters % 1000 == 0:
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:

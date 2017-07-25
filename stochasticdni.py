@@ -28,12 +28,13 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
-parser.add_argument('-y', '--sg_inp', type=str, default='11111',
+parser.add_argument('-y', '--sg_inp', type=str, default='111110',
 					help='Customize input to synthetic subnetworks: Construct a string of 0,1 with 1 at inputs to be conditioned on')
 parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
 parser.add_argument('-w', '--max_grad', type=float, default=0.0,
 					help='Maximum elementwise mean squared norm of the target signal, otherwise gradient is clipped')
+
 # update frequencies
 parser.add_argument('-q', '--main_update_freq', type=int, default=1,
 					help='Number of iterations after which the main network is updated')
@@ -52,9 +53,15 @@ parser.add_argument('-d', '--exptemp', type=float, default=100.0,
 parser.add_argument('-l', '--load', type=str, default=None, help='Path to weights')
 parser.add_argument('-ac', '--val_file',type=str, default=None, help='Write validation results to a file')
 
-# hyperparameters
+# learning rate hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='Learning rate')
 parser.add_argument('-ab', '--sg_learning_rate', type=float, default=0.0001, help='Learning rate for synthetic gradient subnetwork')
+parser.add_argument('-ac', '--slash_rate', type=float, default=1.0,
+					help='Factor by which learning rate of main network is reduced every 20 epochs. No reduction by default')
+parser.add_argument('-ad', '--slash_rate_sg', type=float, default=1.0,
+					help='Factor by which learning rate of subnetwork is reduced every 20 epochs. No reduction by default')
+
+# other hyperparameters
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
 parser.add_argument('-k', '--sg_reg', type=float, default=0.0, help='L2 regularization of subnetwork cost')
@@ -195,9 +202,9 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	global args
 	
 	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
-	inp_list = [14*28, 14*28, units, units, units]
+	inp_list = [14*28, 14*28, units, units, units, 1]
 	inp_size = 0
-	for i in range(5):
+	for i in range(6):
 		if args.sg_inp[i] == '1':
 			inp_size += inp_list[i]
 
@@ -566,12 +573,16 @@ if args.mode == 'train':
 	# reinit = theano.function([gam, bet, w1, w2, b1, b2], None, updates=reinit_dict)
 
 	while condition == False:
-		# handcrafted learning rate schedule: Every 20 epochs slash learning rate by half
-		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6 and args.learning_rate > 1e-6:
-			print "Updated subnetwork learning rate"
-			args.sg_learning_rate /= 2
-			args.learning_rate /= 2
+		# learning rate schedule for subnetwork
+		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6:
+			args.sg_learning_rate /= args.slash_rate_sg
+			print "Updated subnetwork learning rate:", args.sg_learning_rate
 			sgd.lr.set_value(args.sg_learning_rate)
+
+		# learning rate schedule for the main network
+		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6 and args.learning_rate > 1e-6:
+			args.learning_rate /= args.slash_rate
+			print "Updated subnetwork learning rate:", args.learning_rate
 			
 		print "Epoch " + str(epoch + 1),
 		np.random.shuffle(id_order)
