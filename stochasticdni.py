@@ -56,9 +56,9 @@ parser.add_argument('-ac', '--val_file',type=str, default=None, help='Write vali
 # learning rate hyperparameters
 parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='Learning rate')
 parser.add_argument('-ab', '--sg_learning_rate', type=float, default=0.0001, help='Learning rate for synthetic gradient subnetwork')
-parser.add_argument('-ac', '--slash_rate', type=float, default=1.0,
+parser.add_argument('-ad', '--slash_rate', type=float, default=1.0,
 					help='Factor by which learning rate of main network is reduced every 20 epochs. No reduction by default')
-parser.add_argument('-ad', '--slash_rate_sg', type=float, default=1.0,
+parser.add_argument('-ae', '--slash_rate_sg', type=float, default=1.0,
 					help='Factor by which learning rate of subnetwork is reduced every 20 epochs. No reduction by default')
 
 # other hyperparameters
