@@ -486,8 +486,8 @@ if args.mode == 'train':
 
 	while condition == False:
 		if iters != 0 and iters % (20 * 600) == 0 and args.learning_rate > 1e-7:
-			print "Updated subnetwork learning rate"
 			args.learning_rate /= args.slash_rate
+			print "Updated main network learning rate:", args.learning_rate
 
 		print "Epoch " + str(epoch + 1),
 
@@ -518,7 +518,7 @@ if args.mode == 'train':
 		
 		# save every args.save_freq epochs
 		if (epoch + 1) % args.save_freq == 0:
-			print "Saving..."
+			print "Saving...",
 
 			params = {}
 			for key, val in tparams.iteritems():
@@ -537,7 +537,7 @@ if args.mode == 'train':
 	
 	# saving the final model
 	if epoch % args.save_freq != 0:
-		print "Saving..."
+		print "Saving...",
 
 		for key, val in tparams.iteritems():
 				if not (('rmu' in key) or ('rvu' in key)):

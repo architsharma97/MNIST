@@ -13,7 +13,7 @@ def smooth(vals):
 
 legend_entries = []
 for k in [1]:
-	f = open('Results/disc/synthetic_gradients/val_sgpre_11111_ld_100_0.0001.txt', 'r').read().splitlines()[1:]
+	f = open('Results/disc/synthetic_gradients/val_sgsch_11111_ld_100_0.001.txt', 'r').read().splitlines()[1:]
 	print f[0]
 	# vals = [float(line.split(',')[3]) for line in f]
 	# smoothened = smooth(vals) 
@@ -21,26 +21,12 @@ for k in [1]:
 	plt.plot([float(line) for line in f])
 	legend_entries += ['Deep Subnetworks: Conditioned on everything']
 
-	f = open('Results/disc/synthetic_gradients/val_sgpre_11111_lin_100_0.0001.txt', 'r').read().splitlines()[1:]
+	f = open('Results/disc/synthetic_gradients/val_sgsch_11111_lin_100_0.001.txt', 'r').read().splitlines()[1:]
 	# vals = [float(line.split(',')[3]) for line in f]
 	# smoothened = smooth(vals) 
 	# plt.plot(smoothened[::600])
 	plt.plot([float(line) for line in f])
 	legend_entries += ['Linear Subnetworks: Conditioned on everything']
-	
-	f = open('Results/disc/synthetic_gradients/val_sgpre_11100_lin_100_0.0001.txt', 'r').read().splitlines()[1:]
-	# vals = [float(line.split(',')[3]) for line in f]
-	# smoothened = smooth(vals) 
-	# plt.plot(smoothened[::600])
-	plt.plot([float(line) for line in f])
-	legend_entries += ['Linear Subnetworks: Independent of z']
-
-	f = open('Results/disc/synthetic_gradients/val_sgpre_11100_ld_100_0.0001.txt', 'r').read().splitlines()[1:]
-	# vals = [float(line.split(',')[3]) for line in f]
-	# smoothened = smooth(vals) 
-	# plt.plot(smoothened[::600])
-	plt.plot([float(line) for line in f])
-	legend_entries += ['Deep Subnetworks: Independent of z']
 
 	f = open('Results/disc/SF/val_reinforce_100_0.0001.txt', 'r').read().splitlines()[1:]
 	# vals = [float(line.split(',')[2]) for line in f]
