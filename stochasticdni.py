@@ -580,7 +580,7 @@ if args.mode == 'train':
 			sgd.lr.set_value(args.sg_learning_rate)
 
 		# learning rate schedule for the main network
-		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6 and args.learning_rate > 1e-6:
+		if iters != 0 and iters % (20 * 600) == 0 and args.learning_rate > 1e-7:
 			args.learning_rate /= args.slash_rate
 			print "Updated subnetwork learning rate:", args.learning_rate
 			
