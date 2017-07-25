@@ -584,10 +584,10 @@ if args.mode == 'train':
 			idlist = id_order[batch_id*args.batch_size:(batch_id+1)*args.batch_size]
 			
 			# main network update
-			outs = f_grad_shared_dec(idlist)
+			outs = f_grad_shared(idlist)
 			cost, t = outs[:2]
 			if iters % args.main_update_freq == 0:
-				f_update_dec(args.learning_rate)
+				f_update(args.learning_rate)
 			
 			# subnetwork update
 			cost_sg = 'NC'
@@ -601,10 +601,10 @@ if args.mode == 'train':
 			elif np.isnan((t**2).mean()):
 				print "NaN encountered at", iters
 
-			sg_avg_norm = f_grad_shared_enc(idlist)
+			# sg_avg_norm = f_grad_shared_enc(idlist)
 			# print sg_avg_norm
-			if iters % args.main_update_freq == 0:
-				f_update_enc(args.learning_rate)
+			# if iters % args.main_update_freq == 0:
+			# 	f_update_enc(args.learning_rate)
 			
 			# decay mode
 			if args.update_style == 'decay':
