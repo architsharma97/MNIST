@@ -47,7 +47,7 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 parser.add_argument('-aa', '--val_file', type=str, default=None, help='File where validation data is written')
 
 # hyperparameters
-parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='Learning rate')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 parser.add_argument('-c', '--regularization', type=float, default=0., help='Regularization constant')
 
@@ -500,8 +500,9 @@ if args.mode == 'train':
 					cur_temp = np.maximum(temperature_init*np.exp(-anneal_rate*iters, dtype=np.float32), temperature_min)
 			else:
 				# fprint(idlist)
-				cost, xtra= f_grad_shared(idlist)	
+				cost, xtra = f_grad_shared(idlist)	
 				min_cost = min(min_cost, cost)
+			
 			f_update(args.learning_rate)
 
 			epoch_cost += cost

@@ -15,7 +15,7 @@ def adam(lr, tparams, grads, inp, cost, ups=None):
 	else:
 		f_grad_shared = theano.function(inp, cost, updates=gsup, on_unused_input='ignore', profile=False)
 
-	lr0 = 0.0002
+	lr0 = lr
 	b1 = 0.1
 	b2 = 0.001
 	e = 1e-8

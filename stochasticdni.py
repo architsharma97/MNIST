@@ -53,7 +53,7 @@ parser.add_argument('-l', '--load', type=str, default=None, help='Path to weight
 parser.add_argument('-ac', '--val_file',type=str, default=None, help='Write validation results to a file')
 
 # hyperparameters
-parser.add_argument('-a', '--learning_rate', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='Learning rate')
 parser.add_argument('-ab', '--sg_learning_rate', type=float, default=0.0001, help='Learning rate for synthetic gradient subnetwork')
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
 parser.add_argument('-j', '--dropout_prob', type=float, default=0.5, help='Probability with which neuron is dropped')
@@ -409,7 +409,7 @@ else:
 # Training
 if args.mode == 'train':
 	# --------------------Gradients for main network----------------------------------------------------------------------------
-	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).mean(axis=1)
+	reconstruction_loss = T.nnet.binary_crossentropy(probs, gt).sum(axis=1)
 	print "Computing synthetic gradients"
 
 	# separate parameters for encoder, decoder and sg subnetworks
@@ -536,7 +536,7 @@ if args.mode == 'train':
 				tparams_dec[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn)
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost / (14 * 28), sg_target, latent_probs, gradz, latent_samples], ups=updates_bn)
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
 	f_grad_shared_dec, f_update_dec = adam(lr, tparams_dec, grads_decoder, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn_dec)
 	f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
