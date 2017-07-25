@@ -86,7 +86,7 @@ else:
 
 # for numerical stability
 delta = 1e-10
-
+init_rate = args.learning_rate
 temperature_init = 1.0
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -524,7 +524,7 @@ if args.mode == 'train':
 					params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(init_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
@@ -542,7 +542,7 @@ if args.mode == 'train':
 					params[key] = val.get_value()
 
 		# numpy saving
-		np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
+		np.savez('./Results/' + args.latent_type + '/' + args.estimator + '/training_' + code_name + '_' + str(args.batch_size) + '_' + str(init_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 # Test

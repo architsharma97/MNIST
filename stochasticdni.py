@@ -89,7 +89,7 @@ else:
 code_name = args.base_code + '_' + str(args.repeat)
 
 estimator = 'synthetic_gradients'
-
+init_rate = args.learning_rate
 delta = 1e-7
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -653,7 +653,7 @@ if args.mode == 'train':
 					params[key] = val.get_value()
 
 			# numpy saving
-			np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch+1) + '.npz', **params)
+			np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(init_rate) + '_' + str(epoch+1) + '.npz', **params)
 			print "Done!"
 
 		epoch += 1
@@ -672,7 +672,7 @@ if args.mode == 'train':
 				params[key] = val.get_value()
 
 		# numpy saving
-		np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '_' + str(epoch) + '.npz', **params)
+		np.savez('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(init_rate) + '_' + str(epoch) + '.npz', **params)
 		print "Done!"
 
 # Test
