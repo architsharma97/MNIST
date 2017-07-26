@@ -202,7 +202,7 @@ print "Initializing parameters"
 # parameter initializations
 ff_e = 'ff_enc'
 ff_d = 'ff_dec'
-latent_dim = 50
+latent_dim = 100
 
 params = OrderedDict()
 
