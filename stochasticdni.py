@@ -28,7 +28,7 @@ parser.add_argument('-u', '--update_style', type=str, default='fixed',
 					help='Either (decay) or (fixed). Decay will increase the number of iterations after which the subnetwork is updated.')
 parser.add_argument('-x', '--sg_type',type=str, default='lin_deep', 
 					help='Type of synthetic gradient subnetwork: linear (lin) or a two-layer nn (deep) or both (lin_deep)')
-parser.add_argument('-y', '--sg_inp', type=str, default='111110',
+parser.add_argument('-y', '--sg_inp', type=str, default='1111100',
 					help='Customize input to synthetic subnetworks: Construct a string of 0,1 with 1 at inputs to be conditioned on')
 parser.add_argument('-z', '--bn_type', type=int, default=1,
 					help='0: BN->Matrix Multiplication->Nonlinearity, 1: Matrix Multiplication->BN->Nonlinearity')
@@ -202,9 +202,9 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 	global args
 	
 	# conditioned on the whole image, on the activation produced by encoder input and the backpropagated gradients for latent samples.
-	inp_list = [14*28, 14*28, units, units, units, 1]
+	inp_list = [14*28, 14*28, units, units, units, 1, units]
 	inp_size = 0
-	for i in range(6):
+	for i in range(7):
 		if args.sg_inp[i] == '1':
 			inp_size += inp_list[i]
 
@@ -360,7 +360,8 @@ if args.mode == 'train':
 	activation = T.matrix('sg_input_probs', dtype='float32')
 	latent_gradients = T.matrix('sg_input_latgrads', dtype='float32')
 	samples = T.matrix('sg_input_samples', dtype='float32')
-	extra = T.matrix('sg_input_baseline', dtype='float32')
+	extra1 = T.matrix('sg_input_baseline', dtype='float32')
+	extra2 = T.matrix('sg_input_complementary_probs', dtype='float32')
 
 # Test graph
 else:
@@ -392,6 +393,8 @@ if args.clip_probs == 0:
 	latent_probs = out3
 else:
 	latent_probs = T.clip(out3, delta, 1. - delta)
+
+latent_probs_c = 1. - latent_probs
 
 if args.mode == 'test' or args.target == 'REINFORCE':
 	# sample a bernoulli distribution, which a binomial of 1 iteration
@@ -481,8 +484,8 @@ if args.mode == 'train':
 
 	print "Computing gradients wrt to encoder parameters"
 	known_grads = OrderedDict()
-	var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline]
-	sg_cond_vars_actual = [var_list[i] for i in range(6) if args.sg_inp[i] == '1']
+	var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline, latent_probs_c]
+	sg_cond_vars_actual = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
@@ -501,8 +504,8 @@ if args.mode == 'train':
 		print "No gradient clipping"
 		target_gradients_clip = target_gradients
 	
-	var_list = [img_r, gt, activation, latent_gradients, samples, extra]
-	sg_cond_vars_symbol = [var_list[i] for i in range(6) if args.sg_inp[i] == '1']
+	var_list = [img_r, gt, activation, latent_gradients, samples, extra1, extra2]
+	sg_cond_vars_symbol = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 	loss_sg = T.mean((target_gradients_clip - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 	tgnorm = T.mean(target_gradients_clip ** 2)
@@ -544,7 +547,7 @@ if args.mode == 'train':
 				tparams_dec[key] = val
 
 	print "Setting up optimizers"
-	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples, baseline], ups=updates_bn)
+	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples, baseline, latent_probs_c], ups=updates_bn)
 	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
 	f_grad_shared_dec, f_update_dec = adam(lr, tparams_dec, grads_decoder, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn_dec)
 	f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
