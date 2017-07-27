@@ -292,7 +292,7 @@ print "Initializing parameters"
 ff_e = 'ff_enc'
 ff_d = 'ff_dec'
 sg = 'sg'
-latent_dim = 100
+latent_dim = 1000
 
 params = OrderedDict()
 
@@ -555,7 +555,7 @@ if args.mode == 'train':
 	# sgd with momentum updates
 	sgd = SGD(lr=args.sg_learning_rate)
 	sgd_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
-	
+
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
 	id_order = range(len(trc))
