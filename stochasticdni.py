@@ -221,7 +221,6 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
 			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True)
-			params = param_init_fflayer(params, _concat(prefix, 'H2'), 1024, 1024, batchnorm=True, skip_running_vars=True)
 			if args.bn_type == 0:
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
 			else:
@@ -256,11 +255,10 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
-		outh2 = fflayer(tparams, outh + outi, _concat(prefix, 'H2'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		if args.sg_type == 'deep':
-			return fflayer(tparams, outh2 + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			return fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outh2 + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 	
 	elif args.sg_type == 'custom':
 		# channel 2 which forms the skip connection
@@ -500,7 +498,8 @@ if args.mode == 'train':
 
 	# normalize target_gradients to have an upper bound on the norm
 	if args.max_grad > 0.0:
-		target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
+		# target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
+		target_gradients_clip = target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2))
 	else:
 		print "No gradient clipping"
 		target_gradients_clip = target_gradients
