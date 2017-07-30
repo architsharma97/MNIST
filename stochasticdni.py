@@ -58,8 +58,12 @@ parser.add_argument('-a', '--learning_rate', type=float, default=0.0002, help='L
 parser.add_argument('-ab', '--sg_learning_rate', type=float, default=0.0001, help='Learning rate for synthetic gradient subnetwork')
 parser.add_argument('-ad', '--slash_rate', type=float, default=1.0,
 					help='Factor by which learning rate of main network is reduced every 20 epochs. No reduction by default')
-parser.add_argument('-ae', '--slash_rate_sg', type=float, default=1.0,
+parser.add_argument('-ae', '--sg_slash_rate', type=float, default=1.0,
 					help='Factor by which learning rate of subnetwork is reduced every 20 epochs. No reduction by default')
+parser.add_argument('-af','epoch_rate', type=int, default=20,
+					help='Number of epochs after which the learning rate of the main network')
+parser.add_argument('-af','sg_epoch_rate', type=int, default=20,
+					help='Number of epochs after which the learning rate of the subnetwork')
 
 # other hyperparameters
 parser.add_argument('-b', '--batch_size', type=int, default=100, help='Size of the minibatch used for training')
@@ -578,13 +582,13 @@ if args.mode == 'train':
 
 	while condition == False:
 		# learning rate schedule for subnetwork
-		if iters != 0 and iters % (20 * 600) == 0 and args.sg_learning_rate > 1e-6:
+		if iters != 0 and iters % (args.sg_epoch_rate * 600) == 0 and args.sg_learning_rate > 1e-6:
 			args.sg_learning_rate /= args.slash_rate_sg
 			print "Updated subnetwork learning rate:", args.sg_learning_rate
 			sgd.lr.set_value(args.sg_learning_rate)
 
 		# learning rate schedule for the main network
-		if iters != 0 and iters % (20 * 600) == 0 and args.learning_rate > 1e-7:
+		if iters != 0 and iters % (args.epoch_rate * 600) == 0 and args.learning_rate > 1e-7:
 			args.learning_rate /= args.slash_rate
 			print "Updated main network learning rate:", args.learning_rate
 			
@@ -616,11 +620,6 @@ if args.mode == 'train':
 			
 			elif np.isnan((t**2).mean()):
 				print "NaN encountered at", iters
-
-			# sg_avg_norm = f_grad_shared_enc(idlist)
-			# print sg_avg_norm
-			# if iters % args.main_update_freq == 0:
-			# 	f_update_enc(args.learning_rate)
 			
 			# decay mode
 			if args.update_style == 'decay':
