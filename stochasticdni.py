@@ -60,9 +60,9 @@ parser.add_argument('-ad', '--slash_rate', type=float, default=1.0,
 					help='Factor by which learning rate of main network is reduced every 20 epochs. No reduction by default')
 parser.add_argument('-ae', '--sg_slash_rate', type=float, default=1.0,
 					help='Factor by which learning rate of subnetwork is reduced every 20 epochs. No reduction by default')
-parser.add_argument('-af','epoch_rate', type=int, default=20,
+parser.add_argument('-af','--epoch_rate', type=int, default=20,
 					help='Number of epochs after which the learning rate of the main network')
-parser.add_argument('-af','sg_epoch_rate', type=int, default=20,
+parser.add_argument('-af','--sg_epoch_rate', type=int, default=20,
 					help='Number of epochs after which the learning rate of the subnetwork')
 
 # other hyperparameters
