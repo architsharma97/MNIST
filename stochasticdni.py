@@ -583,7 +583,7 @@ if args.mode == 'train':
 	while condition == False:
 		# learning rate schedule for subnetwork
 		if iters != 0 and iters % (args.sg_epoch_rate * 600) == 0 and args.sg_learning_rate > 1e-6:
-			args.sg_learning_rate /= args.slash_rate_sg
+			args.sg_learning_rate /= args.sg_slash_rate
 			print "Updated subnetwork learning rate:", args.sg_learning_rate
 			sgd.lr.set_value(args.sg_learning_rate)
 
