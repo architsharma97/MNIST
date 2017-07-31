@@ -275,12 +275,12 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		if args.sg_type == 'deep':
 			direction_matrix = fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
-			norm = fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='softplus', skip_running_vars=True)
+			norm = fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='relu', skip_running_vars=True)
 
 			return direction_matrix, norm
 		elif args.sg_type == 'lin_deep':
 			direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
-			norm = T.nnet.nnet.softplus(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')]) + fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='softplus', skip_running_vars=True)
+			norm = T.nnet.nnet.relu(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')]) + fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='relu', skip_running_vars=True)
 			
 			return direction_matrix, norm
 	
