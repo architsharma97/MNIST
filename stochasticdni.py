@@ -545,7 +545,7 @@ if args.mode == 'train':
 	
 	# no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
 	
-	loss_sg = T.mean((target_gradients_normalized - di) ** 2) + T.mean((target_norm - no.T) ** 2)
+	loss_sg = -T.mean((target_gradients_normalized*di).sum(axis=1)) + T.mean((target_norm - no.T) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 	tgnorm = T.sqrt(T.mean(target_norm ** 2))
 	# ----------------------------------------------General training routine------------------------------------------------------
