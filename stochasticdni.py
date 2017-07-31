@@ -217,19 +217,10 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
-			# norm prediction
-			params[_concat(prefix, 'Wm')] = init_weights(inp_size, 1, type_init='ortho')
-			params[_concat(prefix, 'bm')] = np.zeros((1,)).astype('float32')
-
 	else:
 		if args.sg_type == 'lin' or args.sg_type == 'lin_deep':
 			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
-
-			# norm prediction
-			params[_concat(prefix, 'Wm')] = np.zeros((inp_size, 1)).astype('float32')
-			# params[_concat(prefix, 'Wm')] = init_weights(inp_size, 1, type_init='ortho')
-			params[_concat(prefix, 'bm')] = np.zeros((1,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
@@ -238,9 +229,6 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
 			else:
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
-
-			# norm prediction
-			params = param_init_fflayer(params, _concat(prefix, 'om'), 1024, 1, zero_init=False, batchnorm=False, skip_running_vars=True)
 		
 		if args.sg_type == 'custom':
 			# residual block
@@ -266,24 +254,15 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		bn_last = None
 
 	if args.sg_type == 'lin':
-		direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
-		norm = T.nnet.nnet.relu(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')])
-
-		return direction_matrix, norm
+		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		if args.sg_type == 'deep':
-			direction_matrix = fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
-			norm = fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='relu', skip_running_vars=True)
-
-			return direction_matrix, norm
+			return fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 		elif args.sg_type == 'lin_deep':
-			direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
-			norm = T.nnet.nnet.relu(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')]) + fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='relu', skip_running_vars=True)
+			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
 			
-			return direction_matrix, norm
-	
 	elif args.sg_type == 'custom':
 		# channel 2 which forms the skip connection
 		inp = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
@@ -508,16 +487,9 @@ if args.mode == 'train':
 	print "Computing gradients wrt to encoder parameters"
 	var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline, latent_probs_c]
 	sg_cond_vars_actual = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
-	direction, norm = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
-	
-	# make the direction matrix unit norm for each example
-	direction = direction.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 
-	# norm = (T.sqrt((norm.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat)).dimshuffle(0, 'x')
-	
 	known_grads = OrderedDict()
-	known_grads[pre_out3] = direction * (norm.sum(axis=1).dimshuffle(0,'x'))
+	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -532,22 +504,13 @@ if args.mode == 'train':
 	if args.max_grad <= 0.0:
 		args.max_grad = 1.0
 
-	target_norm = T.sqrt((target_gradients ** 2).sum(axis=1) + delta)
-	target_gradients_normalized = args.max_grad * target_gradients * (T.inv(target_norm).dimshuffle(0, 'x'))
+	target_gradients_normalized = args.max_grad * target_gradients * (T.inv(T.sqrt((target_gradients ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x'))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples, extra1, extra2]
 	sg_cond_vars_symbol = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
-	di, no = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))
-
-	# make direction for each example a unit vector
-	di = di.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 	
-	# no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
-	
-	loss_sg = -T.mean((target_gradients_normalized*di).sum(axis=1)) + T.mean((target_norm - no.T) ** 2)
+	loss_sg = T.mean((target_gradients_normalized - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
-	tgnorm = T.sqrt(T.mean(target_norm ** 2))
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
 	lr = T.scalar('lr', dtype='float32')
@@ -593,7 +556,7 @@ if args.mode == 'train':
 	
 	# sgd with momentum updates
 	sgd = SGD(lr=args.sg_learning_rate)
-	sgd_update_sg = theano.function(inps_sg, [loss_sg, tgnorm], updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
+	sgd_update_sg = theano.function(inps_sg, loss_sg, updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 
 	print "Training"
 	cost_report = open('./Results/' + args.latent_type + '/' + estimator + '/tsgd_' + code_name + '_' + str(args.batch_size) + '_' + str(args.learning_rate) + '.txt', 'w')
@@ -648,7 +611,7 @@ if args.mode == 'train':
 			cost_sg = 'NC'
 			tmag = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
-				cost_sg, tmag = sgd_update_sg(idlist, *outs[1:])
+				cost_sg = sgd_update_sg(idlist, *outs[1:])
 				# f_update_sg(args.sg_learning_rate)
 				epoch_cost_sg += cost_sg
 			
@@ -670,7 +633,7 @@ if args.mode == 'train':
 			
 			epoch_cost += cost
 			min_cost = min(min_cost, cost)
-			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(tmag) + ',' + str(time.time() - batch_start) + '\n')
+			cost_report.write(str(epoch) + ',' + str(batch_id) + ',' + str(cost) + ',' + str(cost_sg) + ',' + str(time.time() - batch_start) + '\n')
 
 			# partial REINITIALIZATION of the subnetwork to get it out of the local minima
 			# if iters == 1:
