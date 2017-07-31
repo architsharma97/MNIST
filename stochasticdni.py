@@ -512,7 +512,7 @@ if args.mode == 'train':
 	
 	# make the direction matrix unit norm for each example
 	direction = direction.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	# direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+	direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 
 	# norm = (T.sqrt((norm.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat)).dimshuffle(0, 'x')
 	
@@ -541,7 +541,7 @@ if args.mode == 'train':
 
 	# make direction for each example a unit vector
 	di = di.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	# di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+	di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 	
 	# no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
 	
