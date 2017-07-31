@@ -267,7 +267,7 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 
 	if args.sg_type == 'lin':
 		direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
-		norm = T.nnet.nnet.softplus(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')])
+		norm = T.nnet.nnet.relu(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')])
 
 		return direction_matrix, norm
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
@@ -512,12 +512,12 @@ if args.mode == 'train':
 	
 	# make the direction matrix unit norm for each example
 	direction = direction.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	# direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+	direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 
-	norm = (T.sqrt((norm.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat)).dimshuffle(0, 'x')
+	# norm = (T.sqrt((norm.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat)).dimshuffle(0, 'x')
 	
 	known_grads = OrderedDict()
-	known_grads[pre_out3] = direction * norm
+	known_grads[pre_out3] = direction * (norm.sum(axis=1).dimshuffle(0,'x'))
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -541,11 +541,11 @@ if args.mode == 'train':
 
 	# make direction for each example a unit vector
 	di = di.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
-	# di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+	di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
 	
-	no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
+	# no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
 	
-	loss_sg = T.mean((target_gradients_normalized - di) ** 2) + T.mean((target_norm - no) ** 2)
+	loss_sg = T.mean((target_gradients_normalized - di) ** 2) + T.mean((target_norm - no.T) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 	tgnorm = T.sqrt(T.mean(target_norm ** 2))
 	# ----------------------------------------------General training routine------------------------------------------------------
@@ -649,7 +649,6 @@ if args.mode == 'train':
 			tmag = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
 				cost_sg, tmag = sgd_update_sg(idlist, *outs[1:])
-				
 				# f_update_sg(args.sg_learning_rate)
 				epoch_cost_sg += cost_sg
 			

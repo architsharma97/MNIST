@@ -21,5 +21,5 @@ else:
 	else:
 		r = 1000
 
-	for i in range(r):
-		print "Epoch " + str(i+1) + ":", f[i]
+	for i in range(1, r+1):
+		print "Epoch " + str(i) + ":", f[i]
