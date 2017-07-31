@@ -217,10 +217,19 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'W')] = init_weights(inp_size, units, type_init='ortho')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
+			# norm prediction
+			params[_concat(prefix, 'Wm')] = init_weights(inp_size, 1, type_init='ortho')
+			params[_concat(prefix, 'bm')] = np.zeros((1,)).astype('float32')
+
 	else:
 		if args.sg_type == 'lin' or args.sg_type == 'lin_deep':
 			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
+
+			# norm prediction
+			params[_concat(prefix, 'Wm')] = np.zeros((inp_size, 1)).astype('float32')
+			# params[_concat(prefix, 'Wm')] = init_weights(inp_size, 1, type_init='ortho')
+			params[_concat(prefix, 'bm')] = np.zeros((1,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
@@ -230,6 +239,9 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			else:
 				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
 
+			# norm prediction
+			params = param_init_fflayer(params, _concat(prefix, 'om'), 1024, 1, zero_init=False, batchnorm=False, skip_running_vars=True)
+		
 		if args.sg_type == 'custom':
 			# residual block
 			params[_concat(prefix, 'W')] = np.zeros((inp_size, units)).astype('float32')
@@ -244,7 +256,7 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 
 def synth_grad(tparams, prefix, inp, mode='Train'):
 	'''
-	Synthetic gradients
+	Synthetic gradients: outputs a direction matrix, and a norm value
 	'''
 	global args
 	# depending on the bn type being used, bn is used/not used in the layer
@@ -254,15 +266,23 @@ def synth_grad(tparams, prefix, inp, mode='Train'):
 		bn_last = None
 
 	if args.sg_type == 'lin':
-		return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
-	
+		direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')]
+		norm = T.nnet.nnet.softplus(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')])
+
+		return direction_matrix, norm
 	elif args.sg_type == 'deep' or args.sg_type == 'lin_deep':
 		outi = fflayer(tparams, inp, _concat(prefix, 'I'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		outh = fflayer(tparams, outi, _concat(prefix,'H'), nonlin='relu', batchnorm='train', dropout=None, skip_running_vars=True)
 		if args.sg_type == 'deep':
-			return fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			direction_matrix = fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			norm = fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='softplus', skip_running_vars=True)
+
+			return direction_matrix, norm
 		elif args.sg_type == 'lin_deep':
-			return T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			direction_matrix = T.dot(inp, tparams[_concat(prefix, 'W')]) + tparams[_concat(prefix, 'b')] + fflayer(tparams, outi + outh, _concat(prefix, 'o'), batchnorm=bn_last, nonlin=None, skip_running_vars=True)
+			norm = T.nnet.nnet.softplus(T.dot(inp, tparams[_concat(prefix, 'Wm')]) + tparams[_concat(prefix, 'bm')]) + fflayer(tparams, outi + outh, _concat(prefix, 'om'), batchnorm=False, nonlin='softplus', skip_running_vars=True)
+			
+			return direction_matrix, norm
 	
 	elif args.sg_type == 'custom':
 		# channel 2 which forms the skip connection
@@ -483,13 +503,21 @@ if args.mode == 'train':
 
 	elif args.target == 'ST':
 		print "Getting ST target"
-		sg_target = T.grad(cost_decoder, wrt=out3, consider_constant=[dummy])
+		sg_target = T.grad(cost_decoder, wrt=pre_out3, consider_constant=[dummy])
 
 	print "Computing gradients wrt to encoder parameters"
-	known_grads = OrderedDict()
 	var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline, latent_probs_c]
 	sg_cond_vars_actual = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
-	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+	direction, norm = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
+	
+	# make the direction matrix unit norm for each example
+	direction = direction.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+	direction *= T.inv(T.sqrt((direction ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+
+	norm = (T.sqrt((norm.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat)).dimshuffle(0, 'x')
+	
+	known_grads = OrderedDict()
+	known_grads[pre_out3] = direction * norm
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -500,19 +528,26 @@ if args.mode == 'train':
 	for val in param_sg:
 		weights_sum_sg += (val**2).sum()
 
-	# normalize target_gradients to have an upper bound on the norm
-	if args.max_grad > 0.0:
-		# target_gradients_clip = T.switch(T.mean(target_gradients ** 2) < args.max_grad, target_gradients, target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2)))
-		target_gradients_clip = target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2))
-	else:
-		print "No gradient clipping"
-		target_gradients_clip = target_gradients
+	# normalize target_gradients example wise
+	if args.max_grad <= 0.0:
+		args.max_grad = 1.0
+
+	target_norm = T.sqrt((target_gradients ** 2).sum(axis=1) + delta)
+	target_gradients_normalized = args.max_grad * target_gradients * (T.inv(target_norm).dimshuffle(0, 'x'))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples, extra1, extra2]
 	sg_cond_vars_symbol = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
-	loss_sg = T.mean((target_gradients_clip - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
+	di, no = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))
+
+	# make direction for each example a unit vector
+	di = di.reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
+	di *= T.inv(T.sqrt((di ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x')
+	
+	no = T.sqrt((no.reshape((args.batch_size, args.repeat)) ** 2).sum(axis=1) / args.repeat + delta)
+	
+	loss_sg = T.mean((target_gradients_normalized - di) ** 2) + T.mean((target_norm - no) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
-	tgnorm = T.mean(target_gradients_clip ** 2)
+	tgnorm = T.sqrt(T.mean(target_norm ** 2))
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
 	lr = T.scalar('lr', dtype='float32')
@@ -552,9 +587,9 @@ if args.mode == 'train':
 
 	print "Setting up optimizers"
 	f_grad_shared, f_update = adam(lr, tparams_net, grads_net, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples, baseline, latent_probs_c], ups=updates_bn)
-	f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm])
-	f_grad_shared_dec, f_update_dec = adam(lr, tparams_dec, grads_decoder, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn_dec)
-	f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
+	# f_grad_shared_sg, f_update_sg = adam(lr, tparams_sg, grads_sg, inps_sg, [loss_sg, tgnorm, target_gradients_normalized])
+	# f_grad_shared_dec, f_update_dec = adam(lr, tparams_dec, grads_decoder, inps_net, [cost, sg_target, latent_probs, gradz, latent_samples], ups=updates_bn_dec)
+	# f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
 	
 	# sgd with momentum updates
 	sgd = SGD(lr=args.sg_learning_rate)
@@ -614,8 +649,8 @@ if args.mode == 'train':
 			tmag = 'NC'
 			if iters % args.sub_update_freq == 0 and not np.isnan((t**2).mean()):
 				cost_sg, tmag = sgd_update_sg(idlist, *outs[1:])
+				
 				# f_update_sg(args.sg_learning_rate)
-
 				epoch_cost_sg += cost_sg
 			
 			elif np.isnan((t**2).mean()):
