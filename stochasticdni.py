@@ -501,15 +501,17 @@ if args.mode == 'train':
 		weights_sum_sg += (val**2).sum()
 
 	# normalize target_gradients example wise
-	if args.max_grad <= 0.0:
-		args.max_grad = 1.0
+	if args.max_grad > 0.0:
+		target_gradients_normalized = target_gradients * T.sqrt(args.max_grad / T.mean(target_gradients ** 2))
+	else:
+		target_gradients_normalized = target_gradients
 
 	# target_gradients_normalized = args.max_grad * target_gradients * (T.inv(T.sqrt((target_gradients ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x'))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples, extra1, extra2]
 	sg_cond_vars_symbol = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 	
-	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
+	loss_sg = T.mean((target_gradients_normalized - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
