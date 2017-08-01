@@ -223,12 +223,12 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 2048, batchnorm=True, skip_running_vars=True)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 2048, 2048, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True)
 			if args.bn_type == 0:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 2048, units, zero_init=True, batchnorm=True, skip_running_vars=True)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
 			else:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 2048, units, zero_init=True, batchnorm=False)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
 		
 		if args.sg_type == 'custom':
 			# residual block
