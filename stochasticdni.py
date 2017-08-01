@@ -223,12 +223,12 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 2048, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 2048, 2048, batchnorm=True, skip_running_vars=True)
 			if args.bn_type == 0:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 2048, units, zero_init=True, batchnorm=True, skip_running_vars=True)
 			else:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 2048, units, zero_init=True, batchnorm=False)
 		
 		if args.sg_type == 'custom':
 			# residual block
@@ -489,7 +489,7 @@ if args.mode == 'train':
 	sg_cond_vars_actual = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 
 	known_grads = OrderedDict()
-	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test')
+	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
@@ -504,12 +504,12 @@ if args.mode == 'train':
 	if args.max_grad <= 0.0:
 		args.max_grad = 1.0
 
-	target_gradients_normalized = args.max_grad * target_gradients * (T.inv(T.sqrt((target_gradients ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x'))
+	# target_gradients_normalized = args.max_grad * target_gradients * (T.inv(T.sqrt((target_gradients ** 2).sum(axis=1) + delta)).dimshuffle(0, 'x'))
 	
 	var_list = [img_r, gt, activation, latent_gradients, samples, extra1, extra2]
 	sg_cond_vars_symbol = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 	
-	loss_sg = T.mean((target_gradients_normalized - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1))) ** 2)
+	loss_sg = T.mean((target_gradients - synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_symbol, axis=1)).reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat) ** 2)
 	grads_sg = T.grad(loss_sg + args.sg_reg * weights_sum_sg, wrt=param_sg)
 	# ----------------------------------------------General training routine------------------------------------------------------
 	
