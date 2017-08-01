@@ -400,10 +400,7 @@ latent_probs_c = 1. - latent_probs
 
 if args.mode == 'test' or args.target == 'REINFORCE':
 	# sample a bernoulli distribution, which a binomial of 1 iteration
-	# latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
-	lpr = T.extra_ops.repeat(latent_probs, 5, axis=0)
-	mlsamples = srng.binomial(size=lpr.shape, n=1, p=lpr, dtype=theano.config.floatX)
-	latent_samples = mlsamples.reshape((args.batch_size, 5, latent_dim))[:,0,:]
+	latent_samples = srng.binomial(size=latent_probs.shape, n=1, p=latent_probs, dtype=theano.config.floatX)
 
 elif args.target == 'ST':
 	# sample a bernoulli distribution, which a binomial of 1 iteration
@@ -488,12 +485,11 @@ if args.mode == 'train':
 		sg_target = T.grad(cost_decoder, wrt=pre_out3, consider_constant=[dummy])
 
 	print "Computing gradients wrt to encoder parameters"
-	# var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline, latent_probs_c]
-	var_list = [T.extra_ops.repeat(img, 5, axis=0), T.extra_ops.repeat(gt, 5, axis=0), lpr, gradz, mlsamples, T.extra_ops.repeat(baseline, 5, axis=0), 1. - lpr]
+	var_list = [img_r, gt, latent_probs, gradz, latent_samples, baseline, latent_probs_c]
 	sg_cond_vars_actual = [var_list[i] for i in range(7) if args.sg_inp[i] == '1']
 
 	known_grads = OrderedDict()
-	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, 5, latent_dim)).sum(axis=1) / 5
+	known_grads[pre_out3] = synth_grad(tparams, _concat(sg, 'r'), T.concatenate(sg_cond_vars_actual, axis=1), mode='test').reshape((args.batch_size, args.repeat, latent_dim)).sum(axis=1) / args.repeat
 	grads_encoder = T.grad(None, wrt=param_enc, known_grads=known_grads)
 
 	# combine in this order only
