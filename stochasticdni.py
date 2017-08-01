@@ -557,7 +557,7 @@ if args.mode == 'train':
 	# f_grad_shared_enc, f_update_enc = adam(lr, tparams_enc, grads_encoder, inps_net, [T.mean(known_grads[pre_out3] ** 2)], ups=updates_bn_enc)
 	
 	# sgd with momentum updates
-	sgd = SGD(lr=args.sg_learning_rate)
+	sgd = SGD(lr=args.sg_learning_rate, momentum=0.)
 	sgd_update_sg = theano.function(inps_sg, loss_sg, updates=sgd.get_grad_updates(loss_sg, param_sg), on_unused_input='ignore', profile=False)
 
 	print "Training"
