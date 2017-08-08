@@ -114,7 +114,7 @@ def split_img(img):
 	veclen = len(img)
 	return (img[:veclen/2], img[veclen/2:])
 
-def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False, skip_running_vars=False):
+def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=False, skip_running_vars=False, scale=0.1):
 	'''
 	Initializes weights for a feedforward layer
 	'''
@@ -122,7 +122,7 @@ def param_init_fflayer(params, prefix, nin, nout, zero_init=False, batchnorm=Fal
 	if zero_init:
 		params[_concat(prefix, 'W')] = np.zeros((nin, nout)).astype('float32')
 	else:
-		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho')
+		params[_concat(prefix, 'W')] = init_weights(nin, nout, type_init='ortho',scale=scale)
 	
 	params[_concat(prefix, 'b')] = np.zeros((nout,)).astype('float32')
 	
@@ -223,12 +223,12 @@ def param_init_sgmod(params, prefix, units, zero_init=True):
 			params[_concat(prefix, 'b')] = np.zeros((units,)).astype('float32')
 
 		if args.sg_type == 'deep' or args.sg_type == 'lin_deep':
-			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True)
-			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True)
+			params = param_init_fflayer(params, _concat(prefix, 'I'), inp_size, 1024, batchnorm=True, skip_running_vars=True, scale=0.001)
+			params = param_init_fflayer(params, _concat(prefix, 'H'), 1024, 1024, batchnorm=True, skip_running_vars=True, scale=0.001)
 			if args.bn_type == 0:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=True, skip_running_vars=True, scale=0.001)
 			else:
-				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False)
+				params = param_init_fflayer(params, _concat(prefix, 'o'), 1024, units, zero_init=True, batchnorm=False, scale=0.001)
 		
 		if args.sg_type == 'custom':
 			# residual block
