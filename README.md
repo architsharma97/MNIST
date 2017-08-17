@@ -22,7 +22,7 @@ THEANO_FLAGS='floatX=float32, device=cuda' python main.py --base_code test # a h
 
 Main script provides a lot of training options which are explained in the script (or can be accessed using help of argparse). Two major choices are: Latent variable (Either discrete or continuous) or Gradient estimator (Score Function estimator or SF, popularly known as REINFORCE and reparametrized backpropagation/path derivative estimators).
 
-  - **Gaussian latent variable with backpropagation**: Uses the standard backpropagation routine allowed by the reparametrization trick.
+  - **Gaussian latent variable with Backpropagation**: Uses the standard backpropagation routine allowed by the reparametrization trick.
 
   - **Gaussian latent variable with REINFORCE**: Uses the REINFORCE estimator. Due to its high variance, the network will struggle to converge.
 
