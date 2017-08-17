@@ -28,7 +28,7 @@ Main script provides a lot of training options which are explained in the script
 
   - **Discrete latent variable with REINFORCE**: Uses the REINFORCE estimator for bernoulli latent variable.
 
-  - **Discrete latenet variable with ST**: Uses the straight through estimator for bernoulli latent variable.
+  - **Discrete latent variable with ST**: Uses the straight through estimator for bernoulli latent variable.
 
   - **Discrete latent variable with continuous relaxation using Gumbel-Softmax reparametrization**: Uses the gumbel-softmax approximation for discrete latent variables. This also allows the usage of reparametrization trick to make use of PD estimators. There are two modes: Soft-sampling and Hard-sampling. Hard-Sampling makes use of the Straight Through (ST) estimator to propagate gradients through the non-differentiable operation of hard sampling.
 
