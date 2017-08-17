@@ -22,15 +22,15 @@ THEANO_FLAGS='floatX=float32, device=cuda' python main.py --base_code test # a h
 
 Main script provides a lot of training options which are explained in the script (or can be accessed using help of argparse). Two major choices are: Latent variable (Either discrete or continuous) or Gradient estimator (Score Function estimator or SF, popularly known as REINFORCE and reparametrized backpropagation/path derivative estimators).
 
--**Gaussian + PD**: Uses the standard backpropagation routine allowed by the reparametrization trick.
+- **Gaussian + PD**: Uses the standard backpropagation routine allowed by the reparametrization trick.
 
--**Gaussian + SF**: Uses the REINFORCE estimator. Due to its high variance, the network will struggle to converge.
+- **Gaussian + SF**: Uses the REINFORCE estimator. Due to its high variance, the network will struggle to converge.
 
--**Discrete + SF**: Uses the REINFORCE estimator for bernoulli latent variable.
+- **Discrete + SF**: Uses the REINFORCE estimator for bernoulli latent variable.
 
--**Discrete + ST**: Uses the straight through estimator for bernoulli latent variable.
+- **Discrete + ST**: Uses the straight through estimator for bernoulli latent variable.
 
--**Discrete + PD**: Uses the gumbel-softmax approximation for discrete latent variables. This also allows the usage of reparametrization trick to make use of PD estimators. There are two modes: Soft-sampling and Hard-sampling. Hard-Sampling makes use of the Straight Through (ST) estimator to propagate gradients through the non-differentiable operation of hard sampling.
+- **Discrete + PD**: Uses the gumbel-softmax approximation for discrete latent variables. This also allows the usage of reparametrization trick to make use of PD estimators. There are two modes: Soft-sampling and Hard-sampling. Hard-Sampling makes use of the Straight Through (ST) estimator to propagate gradients through the non-differentiable operation of hard sampling.
 
 Note: REINFORCE estimators have a conditional mean baseline to reduce variance (by default), which can be changed as well. 
 ## MNIST Classification using Synthetic Gradients (DNI)
