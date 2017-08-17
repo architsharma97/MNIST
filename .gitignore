@@ -6,4 +6,5 @@ Results_VAE/
 jobsreports/
 *test*
 *.txt
+VAE.py
 
