@@ -7,4 +7,4 @@ jobsreports/
 *test*
 *.txt
 VAE.py
-
+new_estimator.py
